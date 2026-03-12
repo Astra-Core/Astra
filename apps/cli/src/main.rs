@@ -1,8 +1,8 @@
 use anyhow::{bail, Context};
 use astra_connectors::{PostgresDiscoverOptions, PostgresSource, SnapshotExecutionOptions};
 use astra_runtime::{
-    LocalStageChunkStore, LocalStagingConfig, StageChunkRequest, StageChunkStore, StagingConfig,
-    StagingKind,
+    LocalStageChunkStore, LocalStagingConfig, MinioStageChunkStore, MinioStagingConfig,
+    StageChunkPayload, StageChunkRequest, StageChunkStore, StagingConfig, StagingKind,
 };
 use astra_yaml::AstraSpec;
 use clap::{Parser, Subcommand};
@@ -31,6 +31,20 @@ enum Commands {
         #[arg(long)]
         staging_root: Option<PathBuf>,
     },
+    /// Execute a minimal local Postgres snapshot and write staged chunks to MinIO/S3-compatible storage
+    SnapshotToMinioStaging {
+        file: String,
+        #[arg(long)]
+        max_rows_per_table: Option<u64>,
+        #[arg(long)]
+        endpoint: Option<String>,
+        #[arg(long)]
+        region: Option<String>,
+        #[arg(long)]
+        access_key: Option<String>,
+        #[arg(long)]
+        secret_key: Option<String>,
+    },
 }
 
 #[tokio::main]
@@ -45,6 +59,24 @@ async fn main() -> anyhow::Result<()> {
             max_rows_per_table,
             staging_root,
         } => snapshot_to_local_staging(&file, max_rows_per_table, staging_root).await?,
+        Commands::SnapshotToMinioStaging {
+            file,
+            max_rows_per_table,
+            endpoint,
+            region,
+            access_key,
+            secret_key,
+        } => {
+            snapshot_to_minio_staging(
+                &file,
+                max_rows_per_table,
+                endpoint,
+                region,
+                access_key,
+                secret_key,
+            )
+            .await?
+        }
     }
     Ok(())
 }
@@ -122,16 +154,9 @@ async fn snapshot_to_local_staging(
 ) -> anyhow::Result<()> {
     let spec = AstraSpec::from_file(file)?;
     spec.validate()?;
+    ensure_supported_snapshot_source(&spec)?;
 
-    if spec.source.kind != "postgres" {
-        bail!("snapshot-to-local-staging currently supports source.kind=postgres only");
-    }
-
-    let staging = spec
-        .destination
-        .staging
-        .as_ref()
-        .context("destination.staging is required for local snapshot staging")?;
+    let staging = staging_from_spec(&spec)?;
     let source = PostgresSource::from_spec(&spec)?;
     let discovery = source
         .discover(PostgresDiscoverOptions { tables: vec![] })
@@ -150,12 +175,12 @@ async fn snapshot_to_local_staging(
         root_dir: root_dir.clone(),
         storage: StagingConfig {
             kind: StagingKind::Local,
-            bucket: staging.bucket.clone(),
-            prefix: staging.prefix.clone().unwrap_or_default(),
+            bucket: staging.bucket,
+            prefix: staging.prefix,
         },
     });
 
-    store.ensure_ready()?;
+    store.ensure_ready().await?;
 
     println!("discovered postgres source: {}", spec.pipeline.name);
     println!("catalog tables: {}", discovery.catalog.tables.len());
@@ -163,16 +188,15 @@ async fn snapshot_to_local_staging(
     println!("staged chunks:");
 
     for table in snapshot.tables {
-        let chunk = store.write_chunk(StageChunkRequest {
-            pipeline_name: spec.pipeline.name.clone(),
-            stream_name: table.table.clone(),
-            partition_key: "default".to_string(),
-            sequence: table.sequence,
-            payload: astra_runtime::StageChunkPayload::jsonl_gzip(
-                table.row_count,
-                table.rows_jsonl_gzip,
-            ),
-        })?;
+        let chunk = store
+            .write_chunk(StageChunkRequest {
+                pipeline_name: spec.pipeline.name.clone(),
+                stream_name: table.table.clone(),
+                partition_key: "default".to_string(),
+                sequence: table.sequence,
+                payload: StageChunkPayload::jsonl_gzip(table.row_count, table.rows_jsonl_gzip),
+            })
+            .await?;
 
         let resolved = store.resolve_path(&chunk.object_key);
         println!(
@@ -189,6 +213,106 @@ async fn snapshot_to_local_staging(
     }
 
     Ok(())
+}
+
+async fn snapshot_to_minio_staging(
+    file: &str,
+    max_rows_per_table: Option<u64>,
+    endpoint: Option<String>,
+    region: Option<String>,
+    access_key: Option<String>,
+    secret_key: Option<String>,
+) -> anyhow::Result<()> {
+    let spec = AstraSpec::from_file(file)?;
+    spec.validate()?;
+    ensure_supported_snapshot_source(&spec)?;
+
+    let staging = staging_from_spec(&spec)?;
+    let source = PostgresSource::from_spec(&spec)?;
+    let discovery = source
+        .discover(PostgresDiscoverOptions { tables: vec![] })
+        .await?;
+    let snapshot = source
+        .snapshot_to_jsonl_gzip(SnapshotExecutionOptions {
+            tables: vec![],
+            max_rows_per_table,
+        })
+        .await?;
+
+    let storage = StagingConfig {
+        kind: StagingKind::Minio,
+        bucket: staging.bucket,
+        prefix: staging.prefix,
+    };
+    let mut config = MinioStagingConfig::from_env(storage.clone())?;
+    if let Some(endpoint) = endpoint {
+        config.endpoint = endpoint;
+    }
+    if let Some(region) = region {
+        config.region = region;
+    }
+    if let Some(access_key) = access_key {
+        config.access_key = access_key;
+    }
+    if let Some(secret_key) = secret_key {
+        config.secret_key = secret_key;
+    }
+
+    let store = MinioStageChunkStore::new(config.clone());
+    store.ensure_ready().await?;
+
+    println!("discovered postgres source: {}", spec.pipeline.name);
+    println!("catalog tables: {}", discovery.catalog.tables.len());
+    println!("minio endpoint: {}", config.endpoint);
+    println!("staging bucket: {}", config.storage.bucket);
+    println!("staged chunks:");
+
+    for table in snapshot.tables {
+        let chunk = store
+            .write_chunk(StageChunkRequest {
+                pipeline_name: spec.pipeline.name.clone(),
+                stream_name: table.table.clone(),
+                partition_key: "default".to_string(),
+                sequence: table.sequence,
+                payload: StageChunkPayload::jsonl_gzip(table.row_count, table.rows_jsonl_gzip),
+            })
+            .await?;
+
+        println!("- {} -> {} rows", table.table, chunk.row_count);
+        println!("  sql: {}", table.sql);
+        println!(
+            "  chunk: s3://{}/{} bytes={}",
+            chunk.bucket, chunk.object_key, chunk.bytes_written
+        );
+    }
+
+    Ok(())
+}
+
+struct ResolvedStaging {
+    bucket: String,
+    prefix: String,
+}
+
+fn ensure_supported_snapshot_source(spec: &AstraSpec) -> anyhow::Result<()> {
+    if spec.source.kind != "postgres" {
+        bail!("snapshot staging currently supports source.kind=postgres only");
+    }
+
+    Ok(())
+}
+
+fn staging_from_spec(spec: &AstraSpec) -> anyhow::Result<ResolvedStaging> {
+    let staging = spec
+        .destination
+        .staging
+        .as_ref()
+        .context("destination.staging is required for snapshot staging")?;
+
+    Ok(ResolvedStaging {
+        bucket: staging.bucket.clone(),
+        prefix: staging.prefix.clone().unwrap_or_default(),
+    })
 }
 
 fn default_staging_root_from_env() -> Option<PathBuf> {
