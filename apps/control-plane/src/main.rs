@@ -10,9 +10,7 @@ struct HealthResponse {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter("info")
-        .init();
+    tracing_subscriber::fmt().with_env_filter("info").init();
 
     let app = Router::new()
         .route("/health", get(health))
@@ -27,11 +25,17 @@ async fn main() -> anyhow::Result<()> {
 }
 
 async fn health() -> Json<HealthResponse> {
-    Json(HealthResponse { status: "ok", service: "astra-control-plane" })
+    Json(HealthResponse {
+        status: "ok",
+        service: "astra-control-plane",
+    })
 }
 
 async fn ready() -> Json<HealthResponse> {
-    Json(HealthResponse { status: "ready", service: "astra-control-plane" })
+    Json(HealthResponse {
+        status: "ready",
+        service: "astra-control-plane",
+    })
 }
 
 async fn version() -> Json<serde_json::Value> {
