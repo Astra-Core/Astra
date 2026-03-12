@@ -8,4 +8,6 @@ repository.workspace = true
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
+tokio.workspace = true
 astra-yaml = { path = "../../crates/astra-yaml" }
+astra-connectors = { path = "../../crates/astra-connectors" }

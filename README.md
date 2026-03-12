@@ -33,6 +33,7 @@ See the docs folder for the real details instead of README cosplay.
 - Product brief: `docs/product/brief.md`
 - Architecture RFC: `docs/architecture/rfc-0001-v1-architecture.md`
 - YAML spec draft: `docs/architecture/yaml-spec-draft.md`
+- Staging contract draft: `docs/architecture/staging-contract.md`
 - Example pipeline config: `examples/postgres-to-warehouse.astra.yaml`
 - Kanban + epics + issue seed: `docs/product/kanban-and-issue-seed.md`
 - v0.1 roadmap: `docs/product/v0.1-roadmap.md`
@@ -58,6 +59,8 @@ Default local ports:
 - Postgres metadata/state: `5432`
 - MinIO S3 API: `9000`
 - MinIO console: `9001`
+
+For local-first staging without a live object store, the runtime crate now includes a filesystem-backed adapter that preserves the same bucket/object-key layout used by MinIO/S3. See `docs/architecture/staging-contract.md` and `.env.example` for the current local staging knobs.
 
 ## Suggested repo layout
 
@@ -105,6 +108,15 @@ cargo run -p astra-control-plane
 Then open <http://127.0.0.1:8080>.
 
 If `ASTRA_DATABASE_URL` points at a reachable Postgres instance, the control plane now persists applied pipeline specs and pipeline summaries there. If not, it falls back to in-memory storage so local hacking still works instead of faceplanting.
+
+For the self-hosted Postgres source skeleton, start the local stack with Podman Compose, export the source password if your YAML uses `passwordRef: env:POSTGRES_PASSWORD`, then run:
+
+```bash
+export POSTGRES_PASSWORD=astra
+cargo run -p astra -- discover-source examples/postgres-to-warehouse.astra.yaml
+```
+
+That currently does the minimum useful thing: parse and validate the Postgres source config, inspect table schemas from a reachable Postgres instance, and emit a snapshot-oriented SQL plan for the captured tables.
 
 The shell is intentionally lightweight and the React + TypeScript follow-up is tracked in issue #26.
 

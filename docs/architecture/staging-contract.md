@@ -25,11 +25,16 @@ A stage chunk represents a flushed batch of records ready for sink apply.
 - stream/table name
 - partition key
 - sequence number
+- bucket
 - object key
 - bytes written
 - row count
+- content type
 - content encoding/compression
 - schema fingerprint or version marker where useful
+- creation timestamp
+
+The runtime crate now models this as a `StageChunk` plus a `StageChunkRequest` payload that can be written by any adapter implementing `StageChunkStore`.
 
 ## Object key convention
 Suggested v0.1 pattern:
@@ -41,6 +46,8 @@ Example:
 `pipelines/postgres-analytics/streams/public.orders/partitions/default/chunks/00000000000000000042.jsonl.gz`
 
 This is boring on purpose. Boring keys are easier to debug at 2 AM.
+
+If a staging prefix is configured, it is prepended once and normalized so local filesystem paths and MinIO/S3 object keys line up instead of becoming slash soup.
 
 ## Write flow
 1. source capture reads records/change events
@@ -60,14 +67,25 @@ This allows:
 - avoiding duplicate commit confusion where sink semantics support idempotency
 
 ## Local adapter expectations
-The first local adapter should:
-- target MinIO/S3-compatible storage
-- support bucket existence checks
+The first local adapter is intentionally simple:
+- target a local filesystem root, but preserve the same bucket/object-key contract used by MinIO/S3
+- support bucket existence checks by creating the bucket root on first use
 - write predictable object keys
 - return metadata required by checkpointing
+- read staged chunks back for retry/replay tests
 - avoid premature abstraction theater
+
+The implemented `LocalStageChunkStore` writes chunks to:
+
+`<root>/<bucket>/<prefix>/pipelines/<pipeline>/streams/<stream>/partitions/<partition>/chunks/<sequence>.jsonl.gz`
+
+That means local Podman-based development can stage chunks without requiring a running object-store client SDK, while still matching the same key layout a future MinIO-backed adapter will use.
+
+## Podman-based local development
+The repo already ships a MinIO service in the local Podman Compose stack. The local filesystem adapter is the smallest useful default for dev/test loops, and the same `bucket + prefix + object_key` contract keeps the path to MinIO-compatible writes straightforward when the next adapter lands.
 
 ## Open questions
 - whether v0.1 should standardize on JSONL.gz or allow Parquet early
 - whether a separate apply ledger is cleaner than embedding sink commit markers in checkpoints
 - when to introduce per-destination staging format negotiation
+- whether the MinIO/S3 adapter should live in `astra-runtime` or a dedicated storage crate once there is more than one real backend

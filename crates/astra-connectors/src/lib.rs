@@ -1,7 +1,13 @@
-//! astra-connectors
+pub mod postgres;
+
+pub use postgres::{
+    ColumnSchema, DiscoverReport, PostgresCdcSettings, PostgresConnectionConfig,
+    PostgresDiscoverOptions, PostgresSnapshotPlan, PostgresSource, PostgresSourceConfig,
+    SourceCatalog, SourceTable,
+};
 
 pub const CRATE_NAME: &str = "astra-connectors";
 
 pub fn status() -> &'static str {
-    "skeleton"
+    "postgres source skeleton available"
 }
