@@ -144,7 +144,22 @@ export ASTRA_STAGING_LOCAL_ROOT=.astra/staging
 cargo run -p astra -- snapshot-to-local-staging examples/postgres-to-warehouse.astra.yaml --max-rows-per-table 1000
 ```
 
-That flow reuses the Postgres connector for discovery plus snapshot reads, converts rows to JSONL.gz in-process, and writes one staged chunk per captured table via the filesystem-backed staging adapter.
+That flow now does the first non-hand-wavy useful slice: it can paginate snapshot reads into multiple staged JSONL.gz chunks, persist a local checkpoint ledger under `.astra/checkpoints`, and resume from the next unfinished chunk on rerun. The implementation is still intentionally local-first and narrow: offset-based chunk pagination for Podman/dev workflows, no sink apply yet, and no fake cloud dependencies.
+
+Example:
+
+```bash
+export POSTGRES_PASSWORD=...
+export ASTRA_STAGING_LOCAL_ROOT=.astra/staging
+export ASTRA_CHECKPOINT_LOCAL_ROOT=.astra/checkpoints
+cargo run -p astra -- snapshot-to-local-staging examples/postgres-to-warehouse.astra.yaml --chunk-size 5000
+```
+
+Useful flags:
+
+- `--chunk-size <rows>` overrides `source.capture.snapshot.chunkSize`
+- `--checkpoint-root <dir>` changes where the local resume ledger is stored
+- `--no-resume` ignores any existing ledger and starts from chunk sequence 0 again
 
 There is now a matching narrow-but-real destination leg for local/self-hosted Postgres raw loading:
 

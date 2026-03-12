@@ -3,12 +3,13 @@ use astra_connectors::{
     PostgresDestinationLoader, PostgresDiscoverOptions, PostgresSource, SnapshotExecutionOptions,
 };
 use astra_runtime::{
-    LocalStageChunkStore, LocalStagingConfig, MinioStageChunkStore, MinioStagingConfig,
-    StageChunkPayload, StageChunkRequest, StageChunkStore, StagingConfig, StagingKind,
+    LocalCheckpointStore, LocalStageChunkStore, LocalStagingConfig, MinioStageChunkStore,
+    MinioStagingConfig, SnapshotCheckpointLedger, StageChunkPayload, StageChunkRequest,
+    StageChunkStore, StagingConfig, StagingKind,
 };
 use astra_yaml::AstraSpec;
 use clap::{Parser, Subcommand};
-use std::path::PathBuf;
+use std::{collections::BTreeMap, path::PathBuf};
 
 #[derive(Parser)]
 #[command(name = "astra", about = "Astra CLI", version)]
@@ -25,13 +26,19 @@ enum Commands {
     Apply { file: String },
     /// Discover schema details for a Postgres source using a local/self-hosted database
     DiscoverSource { file: String },
-    /// Execute a minimal local Postgres snapshot and write staged chunks to the filesystem adapter
+    /// Execute a local Postgres snapshot, chunk rows into staged files, and persist resume checkpoints
     SnapshotToLocalStaging {
         file: String,
         #[arg(long)]
         max_rows_per_table: Option<u64>,
         #[arg(long)]
         staging_root: Option<PathBuf>,
+        #[arg(long)]
+        checkpoint_root: Option<PathBuf>,
+        #[arg(long)]
+        chunk_size: Option<u64>,
+        #[arg(long)]
+        no_resume: bool,
     },
     /// Execute a minimal local Postgres snapshot and write staged chunks to MinIO/S3-compatible storage
     SnapshotToMinioStaging {
@@ -66,7 +73,20 @@ async fn main() -> anyhow::Result<()> {
             file,
             max_rows_per_table,
             staging_root,
-        } => snapshot_to_local_staging(&file, max_rows_per_table, staging_root).await?,
+            checkpoint_root,
+            chunk_size,
+            no_resume,
+        } => {
+            snapshot_to_local_staging(
+                &file,
+                max_rows_per_table,
+                staging_root,
+                checkpoint_root,
+                chunk_size,
+                no_resume,
+            )
+            .await?
+        }
         Commands::SnapshotToMinioStaging {
             file,
             max_rows_per_table,
@@ -162,6 +182,9 @@ async fn snapshot_to_local_staging(
     file: &str,
     max_rows_per_table: Option<u64>,
     staging_root: Option<PathBuf>,
+    checkpoint_root: Option<PathBuf>,
+    chunk_size: Option<u64>,
+    no_resume: bool,
 ) -> anyhow::Result<()> {
     let spec = AstraSpec::from_file(file)?;
     spec.validate()?;
@@ -172,16 +195,45 @@ async fn snapshot_to_local_staging(
     let discovery = source
         .discover(PostgresDiscoverOptions { tables: vec![] })
         .await?;
-    let snapshot = source
-        .snapshot_to_jsonl_gzip(SnapshotExecutionOptions {
-            tables: vec![],
-            max_rows_per_table,
-        })
-        .await?;
 
     let root_dir = staging_root
         .or_else(default_staging_root_from_env)
         .unwrap_or_else(|| PathBuf::from(".astra/staging"));
+    let checkpoint_root = checkpoint_root
+        .or_else(default_checkpoint_root_from_env)
+        .unwrap_or_else(|| PathBuf::from(".astra/checkpoints"));
+    let checkpoint_store = LocalCheckpointStore::new(checkpoint_root.clone());
+    let existing_ledger = if no_resume {
+        SnapshotCheckpointLedger {
+            pipeline_name: spec.pipeline.name.clone(),
+            updated_at_unix_ms: 0,
+            tables: BTreeMap::new(),
+        }
+    } else {
+        checkpoint_store.load(&spec.pipeline.name)?
+    };
+
+    let start_sequence_by_table = existing_ledger
+        .tables
+        .iter()
+        .filter_map(|(table, checkpoint)| {
+            if checkpoint.completed {
+                None
+            } else {
+                Some((table.clone(), checkpoint.next_sequence))
+            }
+        })
+        .collect();
+
+    let snapshot = source
+        .snapshot_to_jsonl_gzip(SnapshotExecutionOptions {
+            tables: vec![],
+            max_rows_per_table,
+            chunk_size,
+            start_sequence_by_table,
+        })
+        .await?;
+
     let store = LocalStageChunkStore::new(LocalStagingConfig {
         root_dir: root_dir.clone(),
         storage: StagingConfig {
@@ -192,10 +244,30 @@ async fn snapshot_to_local_staging(
     });
 
     store.ensure_ready().await?;
+    checkpoint_store.ensure_ready()?;
 
     println!("discovered postgres source: {}", spec.pipeline.name);
     println!("catalog tables: {}", discovery.catalog.tables.len());
     println!("local staging root: {}", root_dir.display());
+    println!("local checkpoint root: {}", checkpoint_root.display());
+    if no_resume {
+        println!("resume mode: disabled (--no-resume)");
+    } else {
+        let resumable = existing_ledger
+            .tables
+            .iter()
+            .filter(|(_, cp)| !cp.completed)
+            .count();
+        let completed = existing_ledger
+            .tables
+            .iter()
+            .filter(|(_, cp)| cp.completed)
+            .count();
+        println!(
+            "resume mode: enabled ({} resumable table(s), {} completed table(s) from ledger)",
+            resumable, completed
+        );
+    }
     println!("staged chunks:");
 
     for table in snapshot.tables {
@@ -208,6 +280,13 @@ async fn snapshot_to_local_staging(
                 payload: StageChunkPayload::jsonl_gzip(table.row_count, table.rows_jsonl_gzip),
             })
             .await?;
+        checkpoint_store.record_chunk_staged(
+            &spec.pipeline.name,
+            &table.table,
+            table.sequence,
+            chunk.row_count,
+            &chunk.object_key,
+        )?;
 
         let resolved = store.resolve_path(&chunk.object_key);
         println!(
@@ -218,10 +297,28 @@ async fn snapshot_to_local_staging(
         );
         println!("  sql: {}", table.sql);
         println!(
-            "  chunk: bucket={} key={} bytes={}",
-            chunk.bucket, chunk.object_key, chunk.bytes_written
+            "  chunk: bucket={} key={} bytes={} sequence={}",
+            chunk.bucket, chunk.object_key, chunk.bytes_written, chunk.sequence
         );
     }
+
+    println!("table progress:");
+    for progress in snapshot.table_progress {
+        if progress.finished {
+            checkpoint_store.mark_table_complete(&spec.pipeline.name, &progress.table)?;
+        }
+        println!(
+            "- {} -> next_sequence={} rows_emitted={} finished={}",
+            progress.table, progress.next_sequence, progress.rows_emitted, progress.finished
+        );
+    }
+
+    let final_ledger = checkpoint_store.load(&spec.pipeline.name)?;
+    println!(
+        "checkpoint ledger: {} ({} table checkpoint(s))",
+        checkpoint_store.ledger_path(&spec.pipeline.name).display(),
+        final_ledger.tables.len()
+    );
 
     Ok(())
 }
@@ -247,6 +344,8 @@ async fn snapshot_to_minio_staging(
         .snapshot_to_jsonl_gzip(SnapshotExecutionOptions {
             tables: vec![],
             max_rows_per_table,
+            chunk_size: None,
+            start_sequence_by_table: BTreeMap::new(),
         })
         .await?;
 
@@ -397,4 +496,8 @@ async fn load_local_staging_to_postgres(
 
 fn default_staging_root_from_env() -> Option<PathBuf> {
     std::env::var_os("ASTRA_STAGING_LOCAL_ROOT").map(PathBuf::from)
+}
+
+fn default_checkpoint_root_from_env() -> Option<PathBuf> {
+    std::env::var_os("ASTRA_CHECKPOINT_LOCAL_ROOT").map(PathBuf::from)
 }

@@ -4,8 +4,8 @@ pub mod postgres_destination;
 pub use postgres::{
     ColumnSchema, DiscoverReport, PostgresCdcSettings, PostgresConnectionConfig,
     PostgresDiscoverOptions, PostgresSnapshotPlan, PostgresSource, PostgresSourceConfig,
-    SnapshotExecutionOptions, SnapshotExecutionReport, SnapshotTableChunk, SourceCatalog,
-    SourceTable,
+    SnapshotExecutionOptions, SnapshotExecutionReport, SnapshotTableChunk, SnapshotTableProgress,
+    SourceCatalog, SourceTable,
 };
 pub use postgres_destination::{
     PostgresDestinationConfig, PostgresDestinationLoader, RawLoadChunkResult, RawLoadReport,
