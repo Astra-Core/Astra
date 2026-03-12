@@ -81,8 +81,10 @@ name = "astra"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "astra-connectors",
  "astra-yaml",
  "clap",
+ "tokio",
 ]
 
 [[package]]
@@ -108,8 +110,13 @@ name = "astra-connectors"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "astra-yaml",
  "serde",
  "serde_json",
+ "serde_yaml",
+ "tokio",
+ "tokio-postgres",
+ "tracing",
 ]
 
 [[package]]
