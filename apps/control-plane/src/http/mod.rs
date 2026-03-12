@@ -10,8 +10,6 @@ use axum::{
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/", get(health::index))
-        .route("/app.js", get(health::app_js))
-        .route("/styles.css", get(health::styles_css))
         .route("/health", get(health::health))
         .route("/ready", get(health::ready))
         .route("/version", get(health::version))

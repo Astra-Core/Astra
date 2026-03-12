@@ -1,64 +1,16 @@
 <!doctype html>
 <html lang="en">
   <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Astra</title>
-    <link rel="stylesheet" href="/styles.css" />
+    <meta
+      name="description"
+      content="Astra control-plane UI foundation for onboarding, job status, and YAML-first pipeline workflows."
+    />
   </head>
   <body>
-    <div class="layout">
-      <aside class="sidebar">
-        <div class="brand">Astra</div>
-        <nav>
-          <a href="#/onboarding">Onboarding</a>
-          <a href="#/job-status">Job status</a>
-          <a href="#/yaml">YAML</a>
-        </nav>
-      </aside>
-      <main class="content">
-        <header class="hero">
-          <div>
-            <h1>Astra control plane</h1>
-            <p>Fast data replication, less clownery.</p>
-          </div>
-          <button id="refreshBtn">Refresh</button>
-        </header>
-
-        <section id="view-onboarding" class="card view">
-          <div class="grid">
-            <div>
-              <h2>Onboarding flow</h2>
-              <ol>
-                <li>Choose source</li>
-                <li>Choose destination</li>
-                <li>Review YAML</li>
-                <li>Validate</li>
-                <li>Apply</li>
-              </ol>
-            </div>
-            <div>
-              <h2>Canonical config model</h2>
-              <p>
-                The shell references Astra's YAML-first pipeline contract. The preview below is served from
-                <code>examples/postgres-to-warehouse.astra.yaml</code> so the UI stays anchored to the canonical config shape instead of inventing its own nonsense.
-              </p>
-            </div>
-          </div>
-        </section>
-
-        <section id="view-job-status" class="card view hidden">
-          <h2>Job status</h2>
-          <p class="muted">Stubbed operator view for pipeline runs, retries, and current state.</p>
-          <div id="pipelinesList">Loading pipelines…</div>
-        </section>
-
-        <section id="view-yaml" class="card view hidden">
-          <h2>YAML preview</h2>
-          <pre id="yamlPreview">Loading example spec…</pre>
-        </section>
-      </main>
-    </div>
-    <script src="/app.js"></script>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
