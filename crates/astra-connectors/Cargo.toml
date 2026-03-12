@@ -18,3 +18,4 @@ tokio.workspace = true
 flate2 = "1"
 tokio-postgres = { version = "0.7", features = ["with-serde_json-1"] }
 astra-yaml = { path = "../astra-yaml" }
+astra-runtime = { path = "../astra-runtime" }

@@ -144,7 +144,19 @@ export ASTRA_STAGING_LOCAL_ROOT=.astra/staging
 cargo run -p astra -- snapshot-to-local-staging examples/postgres-to-warehouse.astra.yaml --max-rows-per-table 1000
 ```
 
-That flow reuses the Postgres connector for discovery plus snapshot reads, converts rows to JSONL.gz in-process, and writes one staged chunk per captured table via the filesystem-backed staging adapter. It's intentionally narrow: no sink apply yet, no resume/checkpoint loop yet, and no fake cloud dependencies.
+That flow reuses the Postgres connector for discovery plus snapshot reads, converts rows to JSONL.gz in-process, and writes one staged chunk per captured table via the filesystem-backed staging adapter.
+
+There is now a matching narrow-but-real destination leg for local/self-hosted Postgres raw loading:
+
+```bash
+export POSTGRES_PASSWORD=...
+export WAREHOUSE_PASSWORD=...
+export ASTRA_STAGING_LOCAL_ROOT=.astra/staging
+cargo run -p astra -- snapshot-to-local-staging examples/postgres-to-postgres-raw.astra.yaml --max-rows-per-table 1000
+cargo run -p astra -- load-local-staging-to-postgres examples/postgres-to-postgres-raw.astra.yaml
+```
+
+The loader reads staged `JSONL.gz` chunks and lands them in raw Postgres tables (default schema `astra_raw`) with one `jsonb` payload column plus loader metadata. It also records applied chunk object keys so reruns skip already-loaded chunks instead of duplicating them like idiots.
 
 If you want the same flow against a local MinIO bucket instead of the filesystem, bring up the Podman Compose stack and run:
 

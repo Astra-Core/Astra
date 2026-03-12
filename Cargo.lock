@@ -123,6 +123,7 @@ name = "astra-connectors"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "astra-runtime",
  "astra-yaml",
  "flate2",
  "serde",

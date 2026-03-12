@@ -1,0 +1,46 @@
+version: v1alpha1
+pipeline:
+  name: postgres-raw-local
+  mode: snapshot
+  schedule: manual
+source:
+  kind: postgres
+  connection:
+    host: localhost
+    port: 5432
+    database: app
+    username: app_user
+    passwordRef: env:POSTGRES_PASSWORD
+  capture:
+    tables:
+      - public.users
+      - public.orders
+    snapshot:
+      mode: full
+      chunkSize: 50000
+destination:
+  kind: postgres
+  connection:
+    host: localhost
+    port: 5432
+    database: warehouse
+    username: warehouse_user
+    passwordRef: env:WAREHOUSE_PASSWORD
+    schema: astra_raw
+    tablePrefix: raw_
+    applicationName: astra-loader
+  staging:
+    kind: local
+    bucket: astra-staging
+    prefix: postgres-raw-local/
+  write:
+    mode: append
+    batchSize: 100000
+runtime:
+  parallelism:
+    tables: 2
+  checkpointing:
+    intervalSeconds: 30
+  schemaEvolution:
+    additiveChanges: auto-apply
+    breakingChanges: pause
