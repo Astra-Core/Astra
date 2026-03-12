@@ -39,7 +39,7 @@ impl PipelineService {
             pipeline_name: applied.pipeline.name,
             spec_version: applied.pipeline.spec_version,
             content_hash: applied.content_hash,
-            message: "pipeline spec applied in memory".to_string(),
+            message: "pipeline spec applied".to_string(),
         })
     }
 }

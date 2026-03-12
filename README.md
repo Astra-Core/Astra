@@ -6,7 +6,7 @@ Astra is an open-source data replication platform aiming to be the easy, fast al
 
 - **Blazing fast pipelines** for database CDC and bulk replication
 - **Stupidly easy onboarding** through both UI flows and declarative YAML
-- **Easy self-hosting** with a sane Docker Compose path
+- **Easy self-hosting** with a sane Podman Compose path
 - **Cloud-ready architecture** without forcing cloud complexity onto local installs
 
 ## v0.1 priorities
@@ -45,13 +45,13 @@ Astra includes a minimal local dependency stack at `deploy/docker-compose/docker
 Start it with:
 
 ```bash
-docker compose -f deploy/docker-compose/docker-compose.yml up -d
+podman compose -f deploy/docker-compose/docker-compose.yml up -d
 ```
 
 Stop it with:
 
 ```bash
-docker compose -f deploy/docker-compose/docker-compose.yml down
+podman compose -f deploy/docker-compose/docker-compose.yml down
 ```
 
 Default local ports:
@@ -103,6 +103,8 @@ cargo run -p astra-control-plane
 ```
 
 Then open <http://127.0.0.1:8080>.
+
+If `ASTRA_DATABASE_URL` points at a reachable Postgres instance, the control plane now persists applied pipeline specs and pipeline summaries there. If not, it falls back to in-memory storage so local hacking still works instead of faceplanting.
 
 The shell is intentionally lightweight and the React + TypeScript follow-up is tracked in issue #26.
 
