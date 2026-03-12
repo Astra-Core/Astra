@@ -1,6 +1,12 @@
-use astra_connectors::{PostgresDiscoverOptions, PostgresSource};
+use anyhow::{bail, Context};
+use astra_connectors::{PostgresDiscoverOptions, PostgresSource, SnapshotExecutionOptions};
+use astra_runtime::{
+    LocalStageChunkStore, LocalStagingConfig, StageChunkRequest, StageChunkStore, StagingConfig,
+    StagingKind,
+};
 use astra_yaml::AstraSpec;
 use clap::{Parser, Subcommand};
+use std::path::PathBuf;
 
 #[derive(Parser)]
 #[command(name = "astra", about = "Astra CLI", version)]
@@ -17,6 +23,14 @@ enum Commands {
     Apply { file: String },
     /// Discover schema details for a Postgres source using a local/self-hosted database
     DiscoverSource { file: String },
+    /// Execute a minimal local Postgres snapshot and write staged chunks to the filesystem adapter
+    SnapshotToLocalStaging {
+        file: String,
+        #[arg(long)]
+        max_rows_per_table: Option<u64>,
+        #[arg(long)]
+        staging_root: Option<PathBuf>,
+    },
 }
 
 #[tokio::main]
@@ -26,6 +40,11 @@ async fn main() -> anyhow::Result<()> {
         Commands::Validate { file } => validate(&file)?,
         Commands::Apply { file } => apply(&file)?,
         Commands::DiscoverSource { file } => discover_source(&file).await?,
+        Commands::SnapshotToLocalStaging {
+            file,
+            max_rows_per_table,
+            staging_root,
+        } => snapshot_to_local_staging(&file, max_rows_per_table, staging_root).await?,
     }
     Ok(())
 }
@@ -94,4 +113,84 @@ async fn discover_source(file: &str) -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+async fn snapshot_to_local_staging(
+    file: &str,
+    max_rows_per_table: Option<u64>,
+    staging_root: Option<PathBuf>,
+) -> anyhow::Result<()> {
+    let spec = AstraSpec::from_file(file)?;
+    spec.validate()?;
+
+    if spec.source.kind != "postgres" {
+        bail!("snapshot-to-local-staging currently supports source.kind=postgres only");
+    }
+
+    let staging = spec
+        .destination
+        .staging
+        .as_ref()
+        .context("destination.staging is required for local snapshot staging")?;
+    let source = PostgresSource::from_spec(&spec)?;
+    let discovery = source
+        .discover(PostgresDiscoverOptions { tables: vec![] })
+        .await?;
+    let snapshot = source
+        .snapshot_to_jsonl_gzip(SnapshotExecutionOptions {
+            tables: vec![],
+            max_rows_per_table,
+        })
+        .await?;
+
+    let root_dir = staging_root
+        .or_else(default_staging_root_from_env)
+        .unwrap_or_else(|| PathBuf::from(".astra/staging"));
+    let store = LocalStageChunkStore::new(LocalStagingConfig {
+        root_dir: root_dir.clone(),
+        storage: StagingConfig {
+            kind: StagingKind::Local,
+            bucket: staging.bucket.clone(),
+            prefix: staging.prefix.clone().unwrap_or_default(),
+        },
+    });
+
+    store.ensure_ready()?;
+
+    println!("discovered postgres source: {}", spec.pipeline.name);
+    println!("catalog tables: {}", discovery.catalog.tables.len());
+    println!("local staging root: {}", root_dir.display());
+    println!("staged chunks:");
+
+    for table in snapshot.tables {
+        let chunk = store.write_chunk(StageChunkRequest {
+            pipeline_name: spec.pipeline.name.clone(),
+            stream_name: table.table.clone(),
+            partition_key: "default".to_string(),
+            sequence: table.sequence,
+            payload: astra_runtime::StageChunkPayload::jsonl_gzip(
+                table.row_count,
+                table.rows_jsonl_gzip,
+            ),
+        })?;
+
+        let resolved = store.resolve_path(&chunk.object_key);
+        println!(
+            "- {} -> {} rows -> {}",
+            table.table,
+            chunk.row_count,
+            resolved.display()
+        );
+        println!("  sql: {}", table.sql);
+        println!(
+            "  chunk: bucket={} key={} bytes={}",
+            chunk.bucket, chunk.object_key, chunk.bytes_written
+        );
+    }
+
+    Ok(())
+}
+
+fn default_staging_root_from_env() -> Option<PathBuf> {
+    std::env::var_os("ASTRA_STAGING_LOCAL_ROOT").map(PathBuf::from)
 }

@@ -11,3 +11,4 @@ clap.workspace = true
 tokio.workspace = true
 astra-yaml = { path = "../../crates/astra-yaml" }
 astra-connectors = { path = "../../crates/astra-connectors" }
+astra-runtime = { path = "../../crates/astra-runtime" }

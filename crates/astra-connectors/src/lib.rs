@@ -3,7 +3,8 @@ pub mod postgres;
 pub use postgres::{
     ColumnSchema, DiscoverReport, PostgresCdcSettings, PostgresConnectionConfig,
     PostgresDiscoverOptions, PostgresSnapshotPlan, PostgresSource, PostgresSourceConfig,
-    SourceCatalog, SourceTable,
+    SnapshotExecutionOptions, SnapshotExecutionReport, SnapshotTableChunk, SourceCatalog,
+    SourceTable,
 };
 
 pub const CRATE_NAME: &str = "astra-connectors";
