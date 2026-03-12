@@ -5,7 +5,7 @@ use thiserror::Error;
 pub const CRATE_NAME: &str = "astra-yaml";
 const SUPPORTED_VERSION: &str = "v1alpha1";
 
-#[derive(Debug, Error)]
+#[derive(Debug, Error, PartialEq, Eq)]
 pub enum ValidationError {
     #[error("unsupported spec version: {0}")]
     UnsupportedVersion(String),
@@ -13,14 +13,36 @@ pub enum ValidationError {
     EmptyPipelineName,
     #[error("pipeline.schedule must not be empty")]
     EmptySchedule,
-    #[error("continuous schedule requires incremental or cdc mode")]
+    #[error("pipeline.schedule must be manual, continuous, or a valid 5-field cron expression")]
+    InvalidSchedule,
+    #[error("continuous schedule requires cdc mode with a source kind that supports continuous execution")]
     InvalidContinuousSchedule,
     #[error("cdc mode requires a source kind that supports CDC")]
     CdcNotSupported,
+    #[error("source.capture must include at least one table or stream")]
+    MissingCaptureTargets,
+    #[error("postgres sources require at least one captured table")]
+    MissingPostgresTables,
     #[error("snapshot.chunkSize must be greater than zero")]
     InvalidChunkSize,
     #[error("destination.write.batchSize must be greater than zero")]
     InvalidBatchSize,
+    #[error("destination.staging.kind must not be empty")]
+    EmptyStagingKind,
+    #[error("destination.staging.bucket must not be empty")]
+    EmptyStagingBucket,
+    #[error("destination.staging is required for destination kind: {0}")]
+    MissingStaging(String),
+    #[error("source.connection.{field} is required for source kind: {kind}")]
+    MissingSourceConnectionField { kind: String, field: &'static str },
+    #[error("destination.connection is required for destination kind: {0}")]
+    MissingDestinationConnection(String),
+    #[error("destination.connection.{field} is required for destination kind: {kind}")]
+    MissingDestinationConnectionField { kind: String, field: &'static str },
+    #[error("postgres cdc requires source.capture.cdc.slotName")]
+    MissingPostgresCdcSlotName,
+    #[error("postgres cdc requires source.capture.cdc.publicationName")]
+    MissingPostgresCdcPublicationName,
     #[error("unrecognized secret reference: {0}")]
     InvalidSecretReference(String),
 }
@@ -187,14 +209,14 @@ impl AstraSpec {
         if self.pipeline.name.trim().is_empty() {
             return Err(ValidationError::EmptyPipelineName);
         }
-        if self.pipeline.schedule.trim().is_empty() {
-            return Err(ValidationError::EmptySchedule);
-        }
-        if self.pipeline.schedule == "continuous" && self.pipeline.mode == PipelineMode::Snapshot {
-            return Err(ValidationError::InvalidContinuousSchedule);
-        }
+
+        validate_schedule(self)?;
+
         if self.pipeline.mode == PipelineMode::Cdc && !supports_cdc(&self.source.kind) {
             return Err(ValidationError::CdcNotSupported);
+        }
+        if self.source.capture.tables.is_empty() && self.source.capture.streams.is_empty() {
+            return Err(ValidationError::MissingCaptureTargets);
         }
         if let Some(snapshot) = &self.source.capture.snapshot {
             if matches!(snapshot.chunk_size, Some(0)) {
@@ -204,6 +226,10 @@ impl AstraSpec {
         if matches!(self.destination.write.batch_size, Some(0)) {
             return Err(ValidationError::InvalidBatchSize);
         }
+
+        validate_source(self)?;
+        validate_destination(self)?;
+
         for value in self.source.connection.values() {
             validate_secret_ref_value(value)?;
         }
@@ -220,6 +246,157 @@ fn supports_cdc(kind: &str) -> bool {
     matches!(kind, "postgres" | "mysql")
 }
 
+fn supports_continuous_execution(kind: &str) -> bool {
+    matches!(kind, "postgres" | "mysql")
+}
+
+fn destination_requires_staging(kind: &str) -> bool {
+    matches!(kind, "postgres" | "snowflake" | "bigquery")
+}
+
+fn destination_requires_connection(kind: &str) -> bool {
+    matches!(kind, "postgres")
+}
+
+fn validate_schedule(spec: &AstraSpec) -> Result<(), ValidationError> {
+    let schedule = spec.pipeline.schedule.trim();
+    if schedule.is_empty() {
+        return Err(ValidationError::EmptySchedule);
+    }
+
+    if schedule == "manual" {
+        return Ok(());
+    }
+
+    if schedule == "continuous" {
+        if spec.pipeline.mode != PipelineMode::Cdc
+            || !supports_continuous_execution(&spec.source.kind)
+        {
+            return Err(ValidationError::InvalidContinuousSchedule);
+        }
+        return Ok(());
+    }
+
+    if is_valid_five_field_cron(schedule) {
+        return Ok(());
+    }
+
+    Err(ValidationError::InvalidSchedule)
+}
+
+fn validate_source(spec: &AstraSpec) -> Result<(), ValidationError> {
+    match spec.source.kind.as_str() {
+        "postgres" => {
+            require_non_empty_fields(
+                &spec.source.connection,
+                "postgres",
+                true,
+                &["host", "port", "database", "username"],
+            )?;
+            if spec.source.capture.tables.is_empty() {
+                return Err(ValidationError::MissingPostgresTables);
+            }
+            if spec.requests_cdc() {
+                let cdc = spec.source.capture.cdc.as_ref();
+                if !map_has_non_empty_string(cdc, "slotName") {
+                    return Err(ValidationError::MissingPostgresCdcSlotName);
+                }
+                if !map_has_non_empty_string(cdc, "publicationName") {
+                    return Err(ValidationError::MissingPostgresCdcPublicationName);
+                }
+            }
+        }
+        "mysql" => {
+            require_non_empty_fields(
+                &spec.source.connection,
+                "mysql",
+                true,
+                &["host", "port", "database", "username"],
+            )?;
+        }
+        _ => {}
+    }
+
+    Ok(())
+}
+
+fn validate_destination(spec: &AstraSpec) -> Result<(), ValidationError> {
+    if destination_requires_connection(&spec.destination.kind) {
+        let Some(connection) = spec.destination.connection.as_ref() else {
+            return Err(ValidationError::MissingDestinationConnection(
+                spec.destination.kind.clone(),
+            ));
+        };
+        require_non_empty_fields(
+            connection,
+            &spec.destination.kind,
+            false,
+            &["host", "port", "database", "username"],
+        )?;
+    }
+
+    if destination_requires_staging(&spec.destination.kind) {
+        let Some(staging) = spec.destination.staging.as_ref() else {
+            return Err(ValidationError::MissingStaging(
+                spec.destination.kind.clone(),
+            ));
+        };
+        if staging.kind.trim().is_empty() {
+            return Err(ValidationError::EmptyStagingKind);
+        }
+        if staging.bucket.trim().is_empty() {
+            return Err(ValidationError::EmptyStagingBucket);
+        }
+    }
+
+    Ok(())
+}
+
+fn require_non_empty_fields(
+    values: &BTreeMap<String, serde_yaml::Value>,
+    kind: &str,
+    is_source: bool,
+    fields: &[&'static str],
+) -> Result<(), ValidationError> {
+    for field in fields {
+        if !has_non_empty_scalar(values, field) {
+            return Err(if is_source {
+                ValidationError::MissingSourceConnectionField {
+                    kind: kind.to_string(),
+                    field,
+                }
+            } else {
+                ValidationError::MissingDestinationConnectionField {
+                    kind: kind.to_string(),
+                    field,
+                }
+            });
+        }
+    }
+    Ok(())
+}
+
+fn has_non_empty_scalar(values: &BTreeMap<String, serde_yaml::Value>, key: &str) -> bool {
+    match values.get(key) {
+        Some(serde_yaml::Value::String(value)) => !value.trim().is_empty(),
+        Some(serde_yaml::Value::Number(_)) => true,
+        _ => false,
+    }
+}
+
+fn map_has_non_empty_string(
+    values: Option<&BTreeMap<String, serde_yaml::Value>>,
+    key: &str,
+) -> bool {
+    values
+        .and_then(|map| map.get(key))
+        .and_then(|value| match value {
+            serde_yaml::Value::String(value) if !value.trim().is_empty() => Some(value),
+            _ => None,
+        })
+        .is_some()
+}
+
 fn validate_secret_ref_value(value: &serde_yaml::Value) -> Result<(), ValidationError> {
     if let serde_yaml::Value::String(s) = value {
         if s.contains(":") && s.ends_with("_PASSWORD") && !is_supported_secret_ref(s) {
@@ -231,6 +408,47 @@ fn validate_secret_ref_value(value: &serde_yaml::Value) -> Result<(), Validation
 
 fn is_supported_secret_ref(value: &str) -> bool {
     value.starts_with("env:") || value.starts_with("file:") || value.starts_with("vault:")
+}
+
+fn is_valid_five_field_cron(schedule: &str) -> bool {
+    let fields: Vec<_> = schedule.split_whitespace().collect();
+    if fields.len() != 5 {
+        return false;
+    }
+
+    fields.into_iter().all(is_valid_cron_field)
+}
+
+fn is_valid_cron_field(field: &str) -> bool {
+    if field.is_empty() {
+        return false;
+    }
+
+    field.split(',').all(is_valid_cron_segment)
+}
+
+fn is_valid_cron_segment(segment: &str) -> bool {
+    let Some((base, step)) = segment.split_once('/') else {
+        return is_valid_cron_base(segment);
+    };
+
+    is_valid_cron_base(base) && is_positive_integer(step)
+}
+
+fn is_valid_cron_base(base: &str) -> bool {
+    if base == "*" {
+        return true;
+    }
+
+    let Some((start, end)) = base.split_once('-') else {
+        return is_positive_integer(base);
+    };
+
+    is_positive_integer(start) && is_positive_integer(end)
+}
+
+fn is_positive_integer(value: &str) -> bool {
+    !value.is_empty() && value.chars().all(|ch| ch.is_ascii_digit())
 }
 
 pub fn status() -> &'static str {
@@ -291,5 +509,261 @@ runtime: {}
         let spec = AstraSpec::parse_yaml(raw).expect("spec parses");
 
         assert!(spec.requests_cdc());
+        spec.validate().expect("spec validates");
+    }
+
+    #[test]
+    fn rejects_invalid_cron_schedule() {
+        let error = validate_yaml(
+            r#"
+version: v1alpha1
+pipeline:
+  name: bad-schedule
+  mode: snapshot
+  schedule: every five minutes
+source:
+  kind: postgres
+  connection:
+    host: localhost
+    port: 5432
+    database: app
+    username: app_user
+  capture:
+    tables:
+      - public.users
+destination:
+  kind: postgres
+  connection:
+    host: localhost
+    port: 5432
+    database: warehouse
+    username: warehouse_user
+  staging:
+    kind: local
+    bucket: astra-staging
+  write:
+    mode: append
+runtime: {}
+"#,
+        )
+        .expect_err("invalid schedule rejected");
+
+        assert_eq!(error, ValidationError::InvalidSchedule);
+    }
+
+    #[test]
+    fn rejects_continuous_schedule_for_snapshot_mode() {
+        let error = validate_yaml(
+            r#"
+version: v1alpha1
+pipeline:
+  name: bad-continuous
+  mode: snapshot
+  schedule: continuous
+source:
+  kind: postgres
+  connection:
+    host: localhost
+    port: 5432
+    database: app
+    username: app_user
+  capture:
+    tables:
+      - public.users
+destination:
+  kind: snowflake
+  staging:
+    kind: s3
+    bucket: astra-staging
+  write:
+    mode: merge
+runtime: {}
+"#,
+        )
+        .expect_err("continuous schedule rejected");
+
+        assert_eq!(error, ValidationError::InvalidContinuousSchedule);
+    }
+
+    #[test]
+    fn rejects_postgres_source_without_required_connection_fields() {
+        let error = validate_yaml(
+            r#"
+version: v1alpha1
+pipeline:
+  name: missing-source-host
+  mode: snapshot
+  schedule: manual
+source:
+  kind: postgres
+  connection:
+    port: 5432
+    database: app
+    username: app_user
+  capture:
+    tables:
+      - public.users
+destination:
+  kind: snowflake
+  staging:
+    kind: s3
+    bucket: astra-staging
+  write:
+    mode: merge
+runtime: {}
+"#,
+        )
+        .expect_err("missing source field rejected");
+
+        assert_eq!(
+            error,
+            ValidationError::MissingSourceConnectionField {
+                kind: "postgres".to_string(),
+                field: "host",
+            }
+        );
+    }
+
+    #[test]
+    fn rejects_postgres_cdc_without_replication_settings() {
+        let error = validate_yaml(
+            r#"
+version: v1alpha1
+pipeline:
+  name: missing-cdc-settings
+  mode: cdc
+  schedule: continuous
+source:
+  kind: postgres
+  connection:
+    host: localhost
+    port: 5432
+    database: app
+    username: app_user
+  capture:
+    tables:
+      - public.users
+    cdc:
+      slotName: astra_slot
+destination:
+  kind: snowflake
+  staging:
+    kind: s3
+    bucket: astra-staging
+  write:
+    mode: merge
+runtime: {}
+"#,
+        )
+        .expect_err("missing publication rejected");
+
+        assert_eq!(error, ValidationError::MissingPostgresCdcPublicationName);
+    }
+
+    #[test]
+    fn rejects_staged_destinations_without_staging_block() {
+        let error = validate_yaml(
+            r#"
+version: v1alpha1
+pipeline:
+  name: missing-staging
+  mode: snapshot
+  schedule: manual
+source:
+  kind: postgres
+  connection:
+    host: localhost
+    port: 5432
+    database: app
+    username: app_user
+  capture:
+    tables:
+      - public.users
+destination:
+  kind: snowflake
+  write:
+    mode: merge
+runtime: {}
+"#,
+        )
+        .expect_err("missing staging rejected");
+
+        assert_eq!(
+            error,
+            ValidationError::MissingStaging("snowflake".to_string())
+        );
+    }
+
+    #[test]
+    fn rejects_postgres_destination_without_connection() {
+        let error = validate_yaml(
+            r#"
+version: v1alpha1
+pipeline:
+  name: missing-destination-connection
+  mode: snapshot
+  schedule: manual
+source:
+  kind: postgres
+  connection:
+    host: localhost
+    port: 5432
+    database: app
+    username: app_user
+  capture:
+    tables:
+      - public.users
+destination:
+  kind: postgres
+  staging:
+    kind: local
+    bucket: astra-staging
+  write:
+    mode: append
+runtime: {}
+"#,
+        )
+        .expect_err("missing destination connection rejected");
+
+        assert_eq!(
+            error,
+            ValidationError::MissingDestinationConnection("postgres".to_string())
+        );
+    }
+
+    #[test]
+    fn rejects_empty_capture_targets() {
+        let error = validate_yaml(
+            r#"
+version: v1alpha1
+pipeline:
+  name: empty-capture
+  mode: snapshot
+  schedule: manual
+source:
+  kind: mysql
+  connection:
+    host: localhost
+    port: 3306
+    database: app
+    username: app_user
+  capture: {}
+destination:
+  kind: snowflake
+  staging:
+    kind: s3
+    bucket: astra-staging
+  write:
+    mode: merge
+runtime: {}
+"#,
+        )
+        .expect_err("missing capture targets rejected");
+
+        assert_eq!(error, ValidationError::MissingCaptureTargets);
+    }
+
+    fn validate_yaml(raw: &str) -> Result<(), ValidationError> {
+        AstraSpec::parse_yaml(raw).expect("spec parses").validate()
     }
 }

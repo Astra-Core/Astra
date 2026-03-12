@@ -266,8 +266,15 @@ passwordRef: env:POSTGRES_PASSWORD
 ## Semantic validation
 - `version` must be `v1alpha1`
 - `pipeline.name` must be non-empty
+- `pipeline.schedule` must be `manual`, `continuous`, or a valid 5-field cron expression
 - `cdc` mode requires a CDC-capable connector
-- `continuous` schedule is valid only for connectors that support continuous execution
+- `continuous` schedule is valid only for currently supported continuous workloads (`cdc` mode on a continuous-capable source)
+- `source.capture` must include at least one table or stream
+- Postgres and MySQL source configs must include `host`, `port`, `database`, and `username`
+- Postgres sources must include at least one captured table
+- Postgres CDC configs must include both `slotName` and `publicationName`
+- staged destinations must include a non-empty `staging.kind` and `staging.bucket`
+- current Postgres destination configs must include `destination.connection.host`, `port`, `database`, and `username`
 - `chunkSize` must be > 0 if provided
 - `batchSize` must be > 0 if provided
 - secret references must use a recognized prefix

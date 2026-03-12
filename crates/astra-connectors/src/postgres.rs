@@ -598,6 +598,44 @@ mod tests {
         let source = PostgresSource::from_spec(&spec).expect("postgres source builds");
         assert_eq!(source.config.tables, vec!["public.orders", "public.users"]);
         assert_eq!(source.config.connection.port, 5432);
+        assert_eq!(source.config.cdc, None);
+    }
+
+    #[test]
+    fn builds_source_with_cdc_settings_when_present() {
+        let raw = r#"
+version: v1alpha1
+pipeline:
+  name: postgres-cdc
+  mode: cdc
+  schedule: continuous
+source:
+  kind: postgres
+  connection:
+    host: localhost
+    port: 5432
+    database: app
+    username: app_user
+    passwordRef: env:POSTGRES_PASSWORD
+  capture:
+    tables:
+      - public.users
+    cdc:
+      slotName: astra_slot
+      publicationName: astra_publication
+destination:
+  kind: snowflake
+  staging:
+    kind: s3
+    bucket: astra-staging
+  write:
+    mode: merge
+runtime: {}
+"#;
+        let spec = astra_yaml::AstraSpec::parse_yaml(raw).expect("spec parses");
+        spec.validate().expect("spec validates");
+
+        let source = PostgresSource::from_spec(&spec).expect("postgres source builds");
         assert_eq!(
             source.config.cdc,
             Some(PostgresCdcSettings {
