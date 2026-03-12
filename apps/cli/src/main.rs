@@ -344,6 +344,8 @@ async fn snapshot_to_minio_staging(
         .snapshot_to_jsonl_gzip(SnapshotExecutionOptions {
             tables: vec![],
             max_rows_per_table,
+            chunk_size: None,
+            start_sequence_by_table: BTreeMap::new(),
         })
         .await?;
 
