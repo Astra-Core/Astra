@@ -1,11 +1,14 @@
-use crate::repositories::{AppliedPipelineRecord, PipelineRecord, PipelineRepository};
+use crate::repositories::{
+    AppliedPipelineRecord, CreatePipelineRunRecord, PipelineRecord, PipelineRepository,
+    PipelineRunRecord, RecordStagedArtifactRecord, StagedArtifactRecord,
+};
 use anyhow::Context;
 use async_trait::async_trait;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tokio_postgres::{types::Json, Client, NoTls};
+use tokio_postgres::{types::Json, Client, NoTls, Row};
 use uuid::Uuid;
 
 #[derive(Clone)]
@@ -64,6 +67,44 @@ impl PostgresPipelineRepository {
                     UNIQUE (pipeline_id, version),
                     UNIQUE (pipeline_id, content_hash)
                 );
+
+                CREATE TABLE IF NOT EXISTS pipeline_runs (
+                    id UUID PRIMARY KEY,
+                    pipeline_id UUID NOT NULL REFERENCES pipelines(id) ON DELETE CASCADE,
+                    trigger_mode TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    worker_id TEXT,
+                    started_at TIMESTAMPTZ NOT NULL,
+                    finished_at TIMESTAMPTZ,
+                    stats_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_pipeline_runs_pipeline_started_at
+                    ON pipeline_runs (pipeline_id, started_at DESC);
+
+                CREATE TABLE IF NOT EXISTS staged_artifacts (
+                    id UUID PRIMARY KEY,
+                    pipeline_run_id UUID NOT NULL REFERENCES pipeline_runs(id) ON DELETE CASCADE,
+                    stream_name TEXT NOT NULL,
+                    partition_key TEXT NOT NULL,
+                    sequence BIGINT NOT NULL,
+                    bucket TEXT NOT NULL,
+                    object_key TEXT NOT NULL,
+                    bytes_written BIGINT NOT NULL,
+                    row_count BIGINT NOT NULL,
+                    content_type TEXT NOT NULL,
+                    content_encoding TEXT NOT NULL,
+                    schema_fingerprint TEXT,
+                    metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    UNIQUE (pipeline_run_id, object_key),
+                    UNIQUE (pipeline_run_id, stream_name, partition_key, sequence)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_staged_artifacts_run_stream_sequence
+                    ON staged_artifacts (pipeline_run_id, stream_name, partition_key, sequence);
                 "#,
             )
             .await
@@ -239,6 +280,172 @@ impl PipelineRepository for PostgresPipelineRepository {
             },
             content_hash,
         })
+    }
+
+    async fn create_pipeline_run(
+        &self,
+        run: CreatePipelineRunRecord,
+    ) -> anyhow::Result<PipelineRunRecord> {
+        let row = self
+            .client
+            .lock()
+            .await
+            .query_one(
+                r#"
+                INSERT INTO pipeline_runs (id, pipeline_id, trigger_mode, status, worker_id, started_at)
+                SELECT $1, p.id, $2, $3, $4, $5
+                FROM pipelines p
+                WHERE p.name = $6
+                RETURNING id, trigger_mode, status, worker_id, started_at, finished_at, created_at, updated_at
+                "#,
+                &[
+                    &Uuid::new_v4(),
+                    &run.trigger_mode,
+                    &run.status,
+                    &run.worker_id,
+                    &run.started_at,
+                    &run.pipeline_name,
+                ],
+            )
+            .await
+            .with_context(|| format!("failed to create pipeline run for '{}'", run.pipeline_name))?;
+
+        Ok(PipelineRunRecord {
+            id: row.get("id"),
+            pipeline_name: run.pipeline_name,
+            trigger_mode: row.get("trigger_mode"),
+            status: row.get("status"),
+            worker_id: row.get("worker_id"),
+            started_at: row.get("started_at"),
+            finished_at: row.get("finished_at"),
+            created_at: row.get("created_at"),
+            updated_at: row.get("updated_at"),
+        })
+    }
+
+    async fn list_pipeline_runs(
+        &self,
+        pipeline_name: &str,
+    ) -> anyhow::Result<Vec<PipelineRunRecord>> {
+        let rows = self
+            .client
+            .lock()
+            .await
+            .query(
+                r#"
+                SELECT pr.id, p.name AS pipeline_name, pr.trigger_mode, pr.status, pr.worker_id,
+                       pr.started_at, pr.finished_at, pr.created_at, pr.updated_at
+                FROM pipeline_runs pr
+                INNER JOIN pipelines p ON p.id = pr.pipeline_id
+                WHERE p.name = $1
+                ORDER BY pr.started_at DESC, pr.created_at DESC
+                "#,
+                &[&pipeline_name],
+            )
+            .await
+            .with_context(|| format!("failed to list runs for pipeline '{}'", pipeline_name))?;
+
+        Ok(rows.into_iter().map(map_pipeline_run_row).collect())
+    }
+
+    async fn record_staged_artifact(
+        &self,
+        artifact: RecordStagedArtifactRecord,
+    ) -> anyhow::Result<StagedArtifactRecord> {
+        let row = self
+            .client
+            .lock()
+            .await
+            .query_one(
+                r#"
+                INSERT INTO staged_artifacts (
+                    id, pipeline_run_id, stream_name, partition_key, sequence, bucket, object_key,
+                    bytes_written, row_count, content_type, content_encoding, schema_fingerprint, metadata_json
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+                RETURNING id, pipeline_run_id, stream_name, partition_key, sequence, bucket, object_key,
+                          bytes_written, row_count, content_type, content_encoding, schema_fingerprint,
+                          metadata_json, created_at
+                "#,
+                &[
+                    &Uuid::new_v4(),
+                    &artifact.pipeline_run_id,
+                    &artifact.stream_name,
+                    &artifact.partition_key,
+                    &artifact.sequence,
+                    &artifact.bucket,
+                    &artifact.object_key,
+                    &artifact.bytes_written,
+                    &artifact.row_count,
+                    &artifact.content_type,
+                    &artifact.content_encoding,
+                    &artifact.schema_fingerprint,
+                    &Json(&artifact.metadata_json),
+                ],
+            )
+            .await
+            .with_context(|| format!("failed to record staged artifact for run '{}'", artifact.pipeline_run_id))?;
+
+        Ok(map_staged_artifact_row(row))
+    }
+
+    async fn list_staged_artifacts(
+        &self,
+        pipeline_run_id: Uuid,
+    ) -> anyhow::Result<Vec<StagedArtifactRecord>> {
+        let rows = self
+            .client
+            .lock()
+            .await
+            .query(
+                r#"
+                SELECT id, pipeline_run_id, stream_name, partition_key, sequence, bucket, object_key,
+                       bytes_written, row_count, content_type, content_encoding, schema_fingerprint,
+                       metadata_json, created_at
+                FROM staged_artifacts
+                WHERE pipeline_run_id = $1
+                ORDER BY stream_name ASC, partition_key ASC, sequence ASC
+                "#,
+                &[&pipeline_run_id],
+            )
+            .await
+            .with_context(|| format!("failed to list staged artifacts for run '{}'", pipeline_run_id))?;
+
+        Ok(rows.into_iter().map(map_staged_artifact_row).collect())
+    }
+}
+
+fn map_pipeline_run_row(row: Row) -> PipelineRunRecord {
+    PipelineRunRecord {
+        id: row.get("id"),
+        pipeline_name: row.get("pipeline_name"),
+        trigger_mode: row.get("trigger_mode"),
+        status: row.get("status"),
+        worker_id: row.get("worker_id"),
+        started_at: row.get("started_at"),
+        finished_at: row.get("finished_at"),
+        created_at: row.get("created_at"),
+        updated_at: row.get("updated_at"),
+    }
+}
+
+fn map_staged_artifact_row(row: Row) -> StagedArtifactRecord {
+    let metadata_json: Json<Value> = row.get("metadata_json");
+    StagedArtifactRecord {
+        id: row.get("id"),
+        pipeline_run_id: row.get("pipeline_run_id"),
+        stream_name: row.get("stream_name"),
+        partition_key: row.get("partition_key"),
+        sequence: row.get("sequence"),
+        bucket: row.get("bucket"),
+        object_key: row.get("object_key"),
+        bytes_written: row.get("bytes_written"),
+        row_count: row.get("row_count"),
+        content_type: row.get("content_type"),
+        content_encoding: row.get("content_encoding"),
+        schema_fingerprint: row.get("schema_fingerprint"),
+        metadata_json: metadata_json.0,
+        created_at: row.get("created_at"),
     }
 }
 
