@@ -213,26 +213,19 @@ async fn snapshot_to_local_staging(
         checkpoint_store.load(&spec.pipeline.name)?
     };
 
-    let start_sequence_by_table = existing_ledger
-        .tables
-        .iter()
-        .filter_map(|(table, checkpoint)| {
-            if checkpoint.completed {
-                None
-            } else {
-                Some((table.clone(), checkpoint.next_sequence))
-            }
-        })
-        .collect();
+    let snapshot_options =
+        snapshot_execution_options(&spec, &existing_ledger, max_rows_per_table, chunk_size);
+    let no_tables_remaining = no_tables_remaining(&spec, no_resume, &snapshot_options);
 
-    let snapshot = source
-        .snapshot_to_jsonl_gzip(SnapshotExecutionOptions {
-            tables: vec![],
-            max_rows_per_table,
-            chunk_size,
-            start_sequence_by_table,
-        })
-        .await?;
+    let snapshot = if no_tables_remaining {
+        astra_connectors::SnapshotExecutionReport {
+            source_kind: "postgres".to_string(),
+            tables: Vec::new(),
+            table_progress: Vec::new(),
+        }
+    } else {
+        source.snapshot_to_jsonl_gzip(snapshot_options).await?
+    };
 
     let store = LocalStageChunkStore::new(LocalStagingConfig {
         root_dir: root_dir.clone(),
@@ -425,6 +418,56 @@ fn staging_from_spec(spec: &AstraSpec) -> anyhow::Result<ResolvedStaging> {
     })
 }
 
+fn snapshot_execution_options(
+    spec: &AstraSpec,
+    ledger: &SnapshotCheckpointLedger,
+    max_rows_per_table: Option<u64>,
+    chunk_size: Option<u64>,
+) -> SnapshotExecutionOptions {
+    let tables = spec
+        .source
+        .capture
+        .tables
+        .iter()
+        .map(|table| table.trim().to_string())
+        .filter(|table| !table.is_empty())
+        .filter(|table| {
+            !ledger
+                .tables
+                .get(table)
+                .map(|checkpoint| checkpoint.completed)
+                .unwrap_or(false)
+        })
+        .collect();
+
+    let start_sequence_by_table = ledger
+        .tables
+        .iter()
+        .filter_map(|(table, checkpoint)| {
+            if checkpoint.completed {
+                None
+            } else {
+                Some((table.clone(), checkpoint.next_sequence))
+            }
+        })
+        .collect();
+
+    SnapshotExecutionOptions {
+        tables,
+        max_rows_per_table,
+        chunk_size,
+        start_sequence_by_table,
+    }
+}
+
+fn no_tables_remaining(
+    spec: &AstraSpec,
+    no_resume: bool,
+    options: &SnapshotExecutionOptions,
+) -> bool {
+    !no_resume && !spec.source.capture.tables.is_empty() && options.tables.is_empty()
+}
+
 async fn load_local_staging_to_postgres(
     file: &str,
     staging_root: Option<PathBuf>,
@@ -500,4 +543,104 @@ fn default_staging_root_from_env() -> Option<PathBuf> {
 
 fn default_checkpoint_root_from_env() -> Option<PathBuf> {
     std::env::var_os("ASTRA_CHECKPOINT_LOCAL_ROOT").map(PathBuf::from)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use astra_runtime::SnapshotTableCheckpoint;
+
+    fn sample_spec() -> AstraSpec {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../examples/postgres-to-warehouse.astra.yaml");
+        AstraSpec::from_file(path.to_str().expect("utf-8 path")).expect("sample spec loads")
+    }
+
+    #[test]
+    fn snapshot_execution_options_skip_completed_tables() {
+        let spec = sample_spec();
+        let mut ledger = SnapshotCheckpointLedger {
+            pipeline_name: spec.pipeline.name.clone(),
+            updated_at_unix_ms: 0,
+            tables: BTreeMap::new(),
+        };
+        ledger.tables.insert(
+            "public.users".to_string(),
+            SnapshotTableCheckpoint {
+                next_sequence: 0,
+                rows_staged: 10,
+                last_chunk_key: Some("users/0".to_string()),
+                completed: true,
+                updated_at_unix_ms: 1,
+            },
+        );
+        ledger.tables.insert(
+            "public.orders".to_string(),
+            SnapshotTableCheckpoint {
+                next_sequence: 3,
+                rows_staged: 30,
+                last_chunk_key: Some("orders/2".to_string()),
+                completed: false,
+                updated_at_unix_ms: 2,
+            },
+        );
+
+        let options = snapshot_execution_options(&spec, &ledger, Some(100), Some(25));
+
+        assert_eq!(options.tables, vec!["public.orders".to_string()]);
+        assert_eq!(
+            options.start_sequence_by_table.get("public.orders"),
+            Some(&3)
+        );
+        assert!(!options.start_sequence_by_table.contains_key("public.users"));
+        assert_eq!(options.max_rows_per_table, Some(100));
+        assert_eq!(options.chunk_size, Some(25));
+    }
+
+    #[test]
+    fn snapshot_execution_options_keep_uncheckpointed_tables() {
+        let spec = sample_spec();
+        let ledger = SnapshotCheckpointLedger {
+            pipeline_name: spec.pipeline.name.clone(),
+            updated_at_unix_ms: 0,
+            tables: BTreeMap::new(),
+        };
+
+        let options = snapshot_execution_options(&spec, &ledger, None, None);
+
+        assert_eq!(
+            options.tables,
+            vec!["public.users".to_string(), "public.orders".to_string()]
+        );
+        assert!(options.start_sequence_by_table.is_empty());
+        assert!(!no_tables_remaining(&spec, false, &options));
+    }
+
+    #[test]
+    fn no_tables_remaining_when_everything_is_complete() {
+        let spec = sample_spec();
+        let mut ledger = SnapshotCheckpointLedger {
+            pipeline_name: spec.pipeline.name.clone(),
+            updated_at_unix_ms: 0,
+            tables: BTreeMap::new(),
+        };
+        for table in ["public.users", "public.orders"] {
+            ledger.tables.insert(
+                table.to_string(),
+                SnapshotTableCheckpoint {
+                    next_sequence: 1,
+                    rows_staged: 10,
+                    last_chunk_key: Some(format!("{table}/0")),
+                    completed: true,
+                    updated_at_unix_ms: 1,
+                },
+            );
+        }
+
+        let options = snapshot_execution_options(&spec, &ledger, None, Some(25));
+
+        assert!(options.tables.is_empty());
+        assert!(no_tables_remaining(&spec, false, &options));
+        assert!(!no_tables_remaining(&spec, true, &options));
+    }
 }
