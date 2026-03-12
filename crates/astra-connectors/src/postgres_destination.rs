@@ -38,6 +38,12 @@ pub struct RawLoadReport {
     pub applied_chunks: Vec<RawLoadChunkResult>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct LoadChunkOutcome {
+    rows_written: u64,
+    skipped: bool,
+}
+
 #[derive(Debug, Clone)]
 pub struct PostgresDestinationLoader {
     config: PostgresDestinationConfig,
@@ -117,13 +123,12 @@ impl PostgresDestinationLoader {
                 self.config.table_prefix.as_deref().unwrap_or("raw_"),
                 &chunk.stream_name,
             );
-            let skipped = load_chunk(&mut client, &schema, &table_name, &chunk, &bytes).await?;
-            let rows_written = if skipped { 0 } else { chunk.row_count };
+            let outcome = load_chunk(&mut client, &schema, &table_name, &chunk, &bytes).await?;
             applied_chunks.push(RawLoadChunkResult {
                 object_key: chunk.object_key,
                 table_name,
-                rows_written,
-                skipped,
+                rows_written: outcome.rows_written,
+                skipped: outcome.skipped,
             });
         }
 
@@ -155,7 +160,7 @@ async fn load_chunk(
     table_name: &str,
     chunk: &astra_runtime::StageChunk,
     bytes: &[u8],
-) -> anyhow::Result<bool> {
+) -> anyhow::Result<LoadChunkOutcome> {
     let txn = client.transaction().await?;
     let inserted = txn
         .execute(
@@ -175,7 +180,10 @@ async fn load_chunk(
 
     if inserted == 0 {
         txn.rollback().await.ok();
-        return Ok(true);
+        return Ok(LoadChunkOutcome {
+            rows_written: 0,
+            skipped: true,
+        });
     }
 
     txn.batch_execute(&format!(
@@ -185,7 +193,20 @@ async fn load_chunk(
     .await
     .with_context(|| format!("failed to initialize raw table {table_name}"))?;
 
-    for (row_number, value) in decode_jsonl_gzip(bytes)?.into_iter().enumerate() {
+    let rows = decode_jsonl_gzip(bytes)?;
+    let rows_written = rows.len() as u64;
+    if rows_written != chunk.row_count {
+        txn.execute(
+            &format!(
+                "UPDATE {schema_ident}._applied_chunks SET row_count = $2 WHERE object_key = $1",
+                schema_ident = quote_ident(schema)
+            ),
+            &[&chunk.object_key, &(rows_written as i64)],
+        )
+        .await?;
+    }
+
+    for (row_number, value) in rows.into_iter().enumerate() {
         txn.execute(
             &format!(
                 "INSERT INTO {table_ident} (_object_key, _sequence, _row_number, _data) VALUES ($1, $2, $3, $4)",
@@ -203,7 +224,10 @@ async fn load_chunk(
     }
 
     txn.commit().await?;
-    Ok(false)
+    Ok(LoadChunkOutcome {
+        rows_written,
+        skipped: false,
+    })
 }
 
 fn decode_jsonl_gzip(bytes: &[u8]) -> anyhow::Result<Vec<serde_json::Value>> {
@@ -324,10 +348,51 @@ mod tests {
     }
 
     #[test]
+    fn decode_jsonl_gzip_counts_non_empty_rows() {
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+        encoder
+            .write_all(
+                br#"{"id":1}
+
+{"id":2}
+{"id":3}
+"#,
+            )
+            .unwrap();
+        let bytes = encoder.finish().unwrap();
+        let rows = decode_jsonl_gzip(&bytes).unwrap();
+        assert_eq!(rows.len(), 3);
+    }
+
+    #[test]
     fn sanitizes_stream_names_for_raw_tables() {
         assert_eq!(
             raw_table_name("astra_raw", "raw_", "public.orders"),
             "\"astra_raw\".\"raw_public_orders\""
+        );
+    }
+
+    #[test]
+    fn load_chunk_outcome_can_represent_applied_and_skipped_states() {
+        assert_eq!(
+            LoadChunkOutcome {
+                rows_written: 3,
+                skipped: false,
+            },
+            LoadChunkOutcome {
+                rows_written: 3,
+                skipped: false,
+            }
+        );
+        assert_eq!(
+            LoadChunkOutcome {
+                rows_written: 0,
+                skipped: true,
+            },
+            LoadChunkOutcome {
+                rows_written: 0,
+                skipped: true,
+            }
         );
     }
 }
