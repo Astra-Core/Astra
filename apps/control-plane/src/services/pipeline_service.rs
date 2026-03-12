@@ -38,6 +38,11 @@ impl PipelineService {
     ) -> anyhow::Result<ApplySpecResponse> {
         let spec = astra_yaml::AstraSpec::parse_yaml(&yaml)?;
         spec.validate()?;
+        if spec.requests_cdc() {
+            anyhow::bail!(
+                "spec apply does not execute CDC yet. Astra's Postgres source is currently limited to schema discovery and snapshot staging; remove pipeline.mode=cdc and source.capture.cdc before applying this spec."
+            );
+        }
         let applied = self.repository.apply_spec(spec, yaml, created_by).await?;
         Ok(ApplySpecResponse {
             pipeline_name: applied.pipeline.name,
