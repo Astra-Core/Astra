@@ -222,6 +222,83 @@ impl LocalStageChunkStore {
             .filter(|segment| !segment.is_empty())
             .fold(self.bucket_root(), |path, segment| path.join(segment))
     }
+
+    pub fn list_chunks_for_pipeline(&self, pipeline_name: &str) -> Result<Vec<StageChunk>> {
+        let mut chunks = Vec::new();
+        let prefix = self.config.storage.normalized_prefix();
+        let base = if prefix.is_empty() {
+            self.bucket_root()
+        } else {
+            self.bucket_root().join(&prefix)
+        }
+        .join("pipelines")
+        .join(pipeline_name)
+        .join("streams");
+
+        if !base.exists() {
+            return Ok(chunks);
+        }
+
+        let stream_dirs = fs::read_dir(&base)
+            .with_context(|| format!("failed to list staged streams under {}", base.display()))?;
+        for stream_dir in stream_dirs {
+            let stream_dir = stream_dir?;
+            if !stream_dir.file_type()?.is_dir() {
+                continue;
+            }
+            let stream_name = stream_dir.file_name().to_string_lossy().to_string();
+            let chunks_dir = stream_dir
+                .path()
+                .join("partitions")
+                .join("default")
+                .join("chunks");
+            if !chunks_dir.exists() {
+                continue;
+            }
+            for entry in fs::read_dir(&chunks_dir).with_context(|| {
+                format!(
+                    "failed to list staged chunks under {}",
+                    chunks_dir.display()
+                )
+            })? {
+                let entry = entry?;
+                if !entry.file_type()?.is_file() {
+                    continue;
+                }
+                let file_name = entry.file_name().to_string_lossy().to_string();
+                if !file_name.ends_with(".jsonl.gz") {
+                    continue;
+                }
+                let sequence = parse_sequence(&file_name)?;
+                let object_key =
+                    self.config
+                        .storage
+                        .chunk_key(pipeline_name, &stream_name, "default", sequence);
+                let bytes_written = entry.metadata()?.len();
+                chunks.push(StageChunk {
+                    pipeline_name: pipeline_name.to_string(),
+                    stream_name: stream_name.clone(),
+                    partition_key: "default".to_string(),
+                    sequence,
+                    bucket: self.config.storage.bucket.clone(),
+                    object_key,
+                    bytes_written,
+                    row_count: 0,
+                    content_type: STAGING_CONTENT_TYPE_JSONL.to_string(),
+                    content_encoding: STAGING_CONTENT_ENCODING_GZIP.to_string(),
+                    schema_fingerprint: None,
+                    created_at_unix_ms: 0,
+                });
+            }
+        }
+
+        chunks.sort_by(|a, b| {
+            a.stream_name
+                .cmp(&b.stream_name)
+                .then(a.sequence.cmp(&b.sequence))
+        });
+        Ok(chunks)
+    }
 }
 
 #[async_trait]
@@ -385,6 +462,13 @@ fn required_env(name: &str) -> Result<String> {
     std::env::var(name).with_context(|| format!("missing {name}"))
 }
 
+fn parse_sequence(file_name: &str) -> Result<u64> {
+    let trimmed = file_name.trim_end_matches(".jsonl.gz");
+    trimmed
+        .parse::<u64>()
+        .with_context(|| format!("invalid staged chunk sequence in file name {file_name}"))
+}
+
 fn unix_time_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -465,6 +549,50 @@ mod tests {
 
         let bytes = store.read_chunk(&chunk).await.expect("chunk reads");
         assert_eq!(bytes, b"pretend-gzip-jsonl");
+
+        fs::remove_dir_all(root_dir).ok();
+    }
+
+    #[tokio::test]
+    async fn local_store_lists_chunks_for_pipeline() {
+        let root_dir = temp_root("list");
+        let store = LocalStageChunkStore::new(LocalStagingConfig {
+            root_dir: root_dir.clone(),
+            storage: StagingConfig {
+                kind: StagingKind::Local,
+                bucket: "astra-staging".to_string(),
+                prefix: "dev".to_string(),
+            },
+        });
+
+        store
+            .write_chunk(StageChunkRequest {
+                pipeline_name: "postgres-analytics".to_string(),
+                stream_name: "public.orders".to_string(),
+                partition_key: "default".to_string(),
+                sequence: 2,
+                payload: StageChunkPayload::jsonl_gzip(1, vec![1, 2, 3]),
+            })
+            .await
+            .unwrap();
+        store
+            .write_chunk(StageChunkRequest {
+                pipeline_name: "postgres-analytics".to_string(),
+                stream_name: "public.users".to_string(),
+                partition_key: "default".to_string(),
+                sequence: 1,
+                payload: StageChunkPayload::jsonl_gzip(1, vec![4, 5, 6]),
+            })
+            .await
+            .unwrap();
+
+        let chunks = store
+            .list_chunks_for_pipeline("postgres-analytics")
+            .unwrap();
+        assert_eq!(chunks.len(), 2);
+        assert_eq!(chunks[0].stream_name, "public.orders");
+        assert_eq!(chunks[0].sequence, 2);
+        assert_eq!(chunks[1].stream_name, "public.users");
 
         fs::remove_dir_all(root_dir).ok();
     }

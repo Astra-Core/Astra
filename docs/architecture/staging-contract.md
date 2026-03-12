@@ -94,6 +94,24 @@ Current v0.1 behavior:
 
 The runtime crate now includes `MinioStageChunkStore`, and the CLI exposes `snapshot-to-minio-staging` so the same snapshot flow can write directly into a local Podman-managed MinIO instance.
 
+## First destination loader: local Postgres raw tables
+Issue #37 starts with the least delusional destination apply path:
+- read staged `JSONL.gz` chunks from the local staging adapter
+- connect to a self-hosted/local Postgres destination
+- create a raw schema (default `astra_raw`) if it does not exist
+- create one raw table per captured stream, with names derived from the stream (`public.orders` -> `raw_public_orders` by default)
+- insert each JSON document into a `_data jsonb` column plus loader metadata columns
+- track applied chunk object keys in `astra_raw._applied_chunks` so re-running the loader skips already applied chunks instead of duplicating them forever
+
+Current raw table shape:
+- `_object_key text`
+- `_sequence bigint`
+- `_row_number bigint`
+- `_loaded_at timestamptz default now()`
+- `_data jsonb`
+
+This is intentionally narrow. It is not pretending to be merge/upsert semantics yet. It gives Astra a real, self-hostable destination leg that can be run locally under Podman without inventing warehouse-specific nonsense too early.
+
 ## Podman-based local development
 The repo ships a MinIO service in the local Podman Compose stack.
 
@@ -116,8 +134,15 @@ cargo run -p astra -- snapshot-to-minio-staging examples/postgres-to-warehouse.a
 
 If MinIO is not running, the filesystem adapter is still the cheapest dev/test loop.
 
+For the Postgres raw loader, a local/self-hosted setup can skip MinIO entirely and stage to the filesystem:
+1. run a source Postgres and destination Postgres (or separate DBs on one instance)
+2. snapshot to `.astra/staging`
+3. load the staged chunks into the destination raw schema
+
 ## Open questions
 - whether v0.1 should standardize on JSONL.gz or allow Parquet early
 - whether a separate apply ledger is cleaner than embedding sink commit markers in checkpoints
 - when to introduce per-destination staging format negotiation
 - when it becomes worth splitting staging backends into a dedicated storage crate instead of keeping the first two adapters in `astra-runtime`
+- when the Postgres raw loader should graduate from row-by-row inserts to `COPY`-based bulk loading
+- how soon to add normalized/table-shaped destination writers on top of the raw landing zone

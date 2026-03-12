@@ -91,6 +91,8 @@ pub enum SnapshotMode {
 pub struct Destination {
     pub kind: String,
     #[serde(default)]
+    pub connection: Option<BTreeMap<String, serde_yaml::Value>>,
+    #[serde(default)]
     pub staging: Option<Staging>,
     pub write: WriteBehavior,
 }
@@ -201,6 +203,11 @@ impl AstraSpec {
         for value in self.source.connection.values() {
             validate_secret_ref_value(value)?;
         }
+        if let Some(connection) = &self.destination.connection {
+            for value in connection.values() {
+                validate_secret_ref_value(value)?;
+            }
+        }
         Ok(())
     }
 }
@@ -235,5 +242,14 @@ mod tests {
         let raw = include_str!("../../../examples/postgres-to-warehouse.astra.yaml");
         let spec = AstraSpec::parse_yaml(raw).expect("spec parses");
         spec.validate().expect("spec validates");
+    }
+
+    #[test]
+    fn parses_destination_connection_when_present() {
+        let raw = include_str!("../../../examples/postgres-to-postgres-raw.astra.yaml");
+        let spec = AstraSpec::parse_yaml(raw).expect("spec parses");
+        spec.validate().expect("spec validates");
+        assert_eq!(spec.destination.kind, "postgres");
+        assert!(spec.destination.connection.is_some());
     }
 }

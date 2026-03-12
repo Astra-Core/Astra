@@ -1,5 +1,7 @@
 use anyhow::{bail, Context};
-use astra_connectors::{PostgresDiscoverOptions, PostgresSource, SnapshotExecutionOptions};
+use astra_connectors::{
+    PostgresDestinationLoader, PostgresDiscoverOptions, PostgresSource, SnapshotExecutionOptions,
+};
 use astra_runtime::{
     LocalStageChunkStore, LocalStagingConfig, MinioStageChunkStore, MinioStagingConfig,
     StageChunkPayload, StageChunkRequest, StageChunkStore, StagingConfig, StagingKind,
@@ -45,6 +47,12 @@ enum Commands {
         #[arg(long)]
         secret_key: Option<String>,
     },
+    /// Load locally staged JSONL.gz chunks into raw Postgres destination tables
+    LoadLocalStagingToPostgres {
+        file: String,
+        #[arg(long)]
+        staging_root: Option<PathBuf>,
+    },
 }
 
 #[tokio::main]
@@ -76,6 +84,9 @@ async fn main() -> anyhow::Result<()> {
                 secret_key,
             )
             .await?
+        }
+        Commands::LoadLocalStagingToPostgres { file, staging_root } => {
+            load_local_staging_to_postgres(&file, staging_root).await?
         }
     }
     Ok(())
@@ -313,6 +324,75 @@ fn staging_from_spec(spec: &AstraSpec) -> anyhow::Result<ResolvedStaging> {
         bucket: staging.bucket.clone(),
         prefix: staging.prefix.clone().unwrap_or_default(),
     })
+}
+
+async fn load_local_staging_to_postgres(
+    file: &str,
+    staging_root: Option<PathBuf>,
+) -> anyhow::Result<()> {
+    let spec = AstraSpec::from_file(file)?;
+    spec.validate()?;
+
+    let staging = spec
+        .destination
+        .staging
+        .as_ref()
+        .context("destination.staging is required for local destination loading")?;
+    let loader = PostgresDestinationLoader::from_spec(&spec)?;
+    let root_dir = staging_root
+        .or_else(default_staging_root_from_env)
+        .unwrap_or_else(|| PathBuf::from(".astra/staging"));
+    let store = LocalStageChunkStore::new(LocalStagingConfig {
+        root_dir: root_dir.clone(),
+        storage: StagingConfig {
+            kind: StagingKind::Local,
+            bucket: staging.bucket.clone(),
+            prefix: staging.prefix.clone().unwrap_or_default(),
+        },
+    });
+
+    let staged_chunks = store.list_chunks_for_pipeline(&spec.pipeline.name)?;
+    if staged_chunks.is_empty() {
+        bail!(
+            "no staged chunks found for pipeline {} under {}",
+            spec.pipeline.name,
+            root_dir.display()
+        );
+    }
+
+    let mut chunk_payloads = Vec::new();
+    for mut chunk in staged_chunks {
+        let bytes = store.read_chunk(&chunk).await?;
+        chunk.bytes_written = bytes.len() as u64;
+        chunk_payloads.push((chunk, bytes));
+    }
+
+    let report = loader.load_local_stage_chunks(chunk_payloads).await?;
+    println!(
+        "loaded staged chunks into postgres raw schema: {}",
+        report.schema
+    );
+    println!(
+        "destination host: {}:{}",
+        loader.config().host,
+        loader.config().port
+    );
+    println!("local staging root: {}", root_dir.display());
+    for chunk in report.applied_chunks {
+        println!(
+            "- {} -> {} ({})",
+            chunk.object_key,
+            chunk.table_name,
+            if chunk.skipped {
+                "already applied"
+            } else {
+                "applied"
+            }
+        );
+        println!("  rows written: {}", chunk.rows_written);
+    }
+
+    Ok(())
 }
 
 fn default_staging_root_from_env() -> Option<PathBuf> {
