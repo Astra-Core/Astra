@@ -274,14 +274,14 @@ passwordRef: env:POSTGRES_PASSWORD
 
 ---
 
-## Example: Postgres to Snowflake
+## Example: Postgres snapshot to Snowflake staging
 
 ```yaml
 version: v1alpha1
 pipeline:
   name: postgres-analytics
-  mode: cdc
-  schedule: continuous
+  mode: snapshot
+  schedule: "0 * * * *"
 source:
   kind: postgres
   connection:
@@ -297,9 +297,6 @@ source:
     snapshot:
       mode: incremental
       chunkSize: 50000
-    cdc:
-      slotName: astra_slot
-      publicationName: astra_publication
 destination:
   kind: snowflake
   staging:
@@ -318,6 +315,8 @@ runtime:
     additiveChanges: auto-apply
     breakingChanges: pause
 ```
+
+> Note: the schema still models a `cdc` block for future connector work, but the current Postgres source skeleton only supports discovery and snapshot-oriented flows. CDC execution should fail loudly until that runtime exists.
 
 ---
 

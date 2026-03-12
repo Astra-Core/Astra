@@ -1,4 +1,4 @@
-use anyhow::{bail, Context};
+use anyhow::{anyhow, bail, Context};
 use astra_connectors::{
     PostgresDestinationLoader, PostgresDiscoverOptions, PostgresSource, SnapshotExecutionOptions,
 };
@@ -130,12 +130,18 @@ fn validate(file: &str) -> anyhow::Result<()> {
     if let Some(source) = source {
         println!("postgres tables: {}", source.config().tables.join(", "));
     }
+    if spec.requests_cdc() {
+        println!(
+            "note: CDC settings are modeled in the spec, but Astra does not execute Postgres CDC yet; use discovery/snapshot commands only."
+        );
+    }
     Ok(())
 }
 
 fn apply(file: &str) -> anyhow::Result<()> {
     let spec = AstraSpec::from_file(file)?;
     spec.validate()?;
+    ensure_cdc_runtime_not_requested(&spec, "apply")?;
     println!("apply stub for validated pipeline: {}", spec.pipeline.name);
     println!("next step: send normalized spec to control-plane API");
     Ok(())
@@ -188,6 +194,7 @@ async fn snapshot_to_local_staging(
 ) -> anyhow::Result<()> {
     let spec = AstraSpec::from_file(file)?;
     spec.validate()?;
+    ensure_cdc_runtime_not_requested(&spec, "snapshot-to-local-staging")?;
     ensure_supported_snapshot_source(&spec)?;
 
     let staging = staging_from_spec(&spec)?;
@@ -326,6 +333,7 @@ async fn snapshot_to_minio_staging(
 ) -> anyhow::Result<()> {
     let spec = AstraSpec::from_file(file)?;
     spec.validate()?;
+    ensure_cdc_runtime_not_requested(&spec, "snapshot-to-minio-staging")?;
     ensure_supported_snapshot_source(&spec)?;
 
     let staging = staging_from_spec(&spec)?;
@@ -395,6 +403,16 @@ async fn snapshot_to_minio_staging(
 struct ResolvedStaging {
     bucket: String,
     prefix: String,
+}
+
+fn ensure_cdc_runtime_not_requested(spec: &AstraSpec, command: &str) -> anyhow::Result<()> {
+    if spec.requests_cdc() {
+        return Err(anyhow!(
+            "{command} does not execute CDC yet. Astra's Postgres source is currently limited to schema discovery and snapshot staging; remove pipeline.mode=cdc and source.capture.cdc for this command."
+        ));
+    }
+
+    Ok(())
 }
 
 fn ensure_supported_snapshot_source(spec: &AstraSpec) -> anyhow::Result<()> {
@@ -554,6 +572,49 @@ mod tests {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../examples/postgres-to-warehouse.astra.yaml");
         AstraSpec::from_file(path.to_str().expect("utf-8 path")).expect("sample spec loads")
+    }
+
+    #[test]
+    fn rejects_cdc_for_snapshot_commands() {
+        let spec = AstraSpec::parse_yaml(
+            r#"
+version: v1alpha1
+pipeline:
+  name: postgres-cdc
+  mode: cdc
+  schedule: continuous
+source:
+  kind: postgres
+  connection:
+    host: localhost
+    port: 5432
+    database: app
+    username: app_user
+    passwordRef: env:POSTGRES_PASSWORD
+  capture:
+    tables:
+      - public.users
+    cdc:
+      slotName: astra_slot
+      publicationName: astra_publication
+destination:
+  kind: snowflake
+  staging:
+    kind: s3
+    bucket: astra-staging
+  write:
+    mode: merge
+runtime: {}
+"#,
+        )
+        .expect("spec parses");
+
+        let error = ensure_cdc_runtime_not_requested(&spec, "snapshot-to-local-staging")
+            .expect_err("cdc should be rejected");
+
+        assert!(error
+            .to_string()
+            .contains("snapshot-to-local-staging does not execute CDC yet"));
     }
 
     #[test]

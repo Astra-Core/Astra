@@ -176,6 +176,10 @@ impl AstraSpec {
         Self::parse_yaml(&raw)
     }
 
+    pub fn requests_cdc(&self) -> bool {
+        self.pipeline.mode == PipelineMode::Cdc || self.source.capture.cdc.is_some()
+    }
+
     pub fn validate(&self) -> Result<(), ValidationError> {
         if self.version != SUPPORTED_VERSION {
             return Err(ValidationError::UnsupportedVersion(self.version.clone()));
@@ -251,5 +255,41 @@ mod tests {
         spec.validate().expect("spec validates");
         assert_eq!(spec.destination.kind, "postgres");
         assert!(spec.destination.connection.is_some());
+    }
+
+    #[test]
+    fn detects_when_a_spec_requests_cdc() {
+        let raw = r#"
+version: v1alpha1
+pipeline:
+  name: postgres-cdc
+  mode: cdc
+  schedule: continuous
+source:
+  kind: postgres
+  connection:
+    host: localhost
+    port: 5432
+    database: app
+    username: app_user
+    passwordRef: env:POSTGRES_PASSWORD
+  capture:
+    tables:
+      - public.users
+    cdc:
+      slotName: astra_slot
+      publicationName: astra_publication
+destination:
+  kind: snowflake
+  staging:
+    kind: s3
+    bucket: astra-staging
+  write:
+    mode: merge
+runtime: {}
+"#;
+        let spec = AstraSpec::parse_yaml(raw).expect("spec parses");
+
+        assert!(spec.requests_cdc());
     }
 }

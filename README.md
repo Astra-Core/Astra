@@ -14,7 +14,7 @@ Astra is an open-source data replication platform aiming to be the easy, fast al
 Astra v0.1 focuses on one real vertical slice:
 - configure a source and destination
 - run an initial snapshot/backfill
-- continue with incremental sync/CDC where supported
+- continue with incremental sync later; CDC is not executable yet in the current Postgres source skeleton
 - view job history and status in the UI
 - manage the same config via YAML
 
@@ -135,6 +135,8 @@ cargo run -p astra -- discover-source examples/postgres-to-warehouse.astra.yaml
 ```
 
 That currently does the minimum useful thing: parse and validate the Postgres source config, inspect table schemas from a reachable Postgres instance, and emit a snapshot-oriented SQL plan for the captured tables.
+
+CDC is still not executable in this skeleton. If a spec uses `pipeline.mode: cdc` or `source.capture.cdc`, `astra apply` and the control-plane apply API now reject it instead of pretending the runtime exists.
 
 There is also a first honest execution slice for local/self-hosted development:
 
