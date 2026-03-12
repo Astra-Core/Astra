@@ -1,0 +1,42 @@
+[workspace]
+resolver = "2"
+members = [
+  "apps/control-plane",
+  "apps/cli",
+  "apps/worker",
+  "crates/astra-api",
+  "crates/astra-core",
+  "crates/astra-runtime",
+  "crates/astra-metadata",
+  "crates/astra-connectors",
+  "crates/astra-cdc",
+  "crates/astra-saas-sdk",
+  "crates/astra-python-runtime",
+  "crates/astra-yaml",
+  "crates/astra-observability",
+  "crates/astra-secrets",
+]
+
+[workspace.package]
+edition = "2021"
+license = "Apache-2.0"
+version = "0.1.0"
+authors = ["Astra Core"]
+repository = "https://github.com/Astra-Core/Astra"
+
+[workspace.dependencies]
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+thiserror = "2"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal"] }
+axum = "0.7"
+clap = { version = "4", features = ["derive"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["serde", "v4"] }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
