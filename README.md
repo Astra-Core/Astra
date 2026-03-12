@@ -94,6 +94,18 @@ deploy/
 4. Add object-storage staging and one destination loader
 5. Add UI onboarding and job history
 
+## Running the current web shell
+
+The temporary onboarding/job-status shell lives in `apps/web` and is served by the control-plane app.
+
+```bash
+cargo run -p astra-control-plane
+```
+
+Then open <http://127.0.0.1:8080>.
+
+The shell is intentionally lightweight and the React + TypeScript follow-up is tracked in issue #26.
+
 ## Status
 
 Repo scaffold and planning docs have been initialized. The next real move is implementation, not more slideware.
