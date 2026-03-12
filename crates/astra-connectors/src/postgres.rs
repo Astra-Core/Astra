@@ -84,12 +84,16 @@ pub struct DiscoverReport {
     pub snapshot_plan: PostgresSnapshotPlan,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct SnapshotExecutionOptions {
     #[serde(default)]
     pub tables: Vec<String>,
     #[serde(default)]
     pub max_rows_per_table: Option<u64>,
+    #[serde(default)]
+    pub chunk_size: Option<u64>,
+    #[serde(default)]
+    pub start_sequence_by_table: BTreeMap<String, u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -102,9 +106,18 @@ pub struct SnapshotTableChunk {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SnapshotTableProgress {
+    pub table: String,
+    pub next_sequence: u64,
+    pub finished: bool,
+    pub rows_emitted: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SnapshotExecutionReport {
     pub source_kind: String,
     pub tables: Vec<SnapshotTableChunk>,
+    pub table_progress: Vec<SnapshotTableProgress>,
 }
 
 pub struct PostgresSource {
@@ -202,37 +215,106 @@ impl PostgresSource {
 
         let client = connect(&self.config.connection).await?;
         let mut tables = Vec::new();
+        let mut table_progress = Vec::new();
+        let configured_chunk_size = options.chunk_size.or_else(|| {
+            self.config
+                .snapshot
+                .as_ref()
+                .and_then(|snapshot| snapshot.chunk_size)
+        });
 
         for table_name in target_tables {
-            let sql = build_snapshot_json_sql(&table_name, options.max_rows_per_table)?;
-            let rows = client
-                .query(&sql, &[])
-                .await
-                .with_context(|| format!("failed to snapshot table {table_name}"))?;
+            let start_sequence = options
+                .start_sequence_by_table
+                .get(&table_name)
+                .copied()
+                .unwrap_or(0);
+            let mut next_sequence = start_sequence;
+            let mut rows_emitted = 0_u64;
+            let mut finished = false;
 
-            let mut jsonl = Vec::new();
-            let mut row_count = 0_u64;
-            for row in rows {
-                let value: serde_json::Value = read_json_value(&row, "record")?;
-                serde_json::to_writer(&mut jsonl, &value)
-                    .with_context(|| format!("failed to encode staged row for {table_name}"))?;
-                jsonl.push(b'\n');
-                row_count += 1;
+            if let Some(base_chunk_size) = configured_chunk_size {
+                if base_chunk_size == 0 {
+                    bail!("snapshot chunk size must be greater than zero");
+                }
+
+                loop {
+                    let offset = next_sequence.saturating_mul(base_chunk_size);
+                    let remaining = options
+                        .max_rows_per_table
+                        .map(|max_rows| max_rows.saturating_sub(offset));
+
+                    if matches!(remaining, Some(0)) {
+                        break;
+                    }
+
+                    let limit = remaining
+                        .map(|rows| rows.min(base_chunk_size))
+                        .unwrap_or(base_chunk_size);
+                    let sql = build_snapshot_json_sql(&table_name, Some(limit), Some(offset))?;
+                    let rows = client
+                        .query(&sql, &[])
+                        .await
+                        .with_context(|| format!("failed to snapshot table {table_name}"))?;
+
+                    if rows.is_empty() {
+                        finished = true;
+                        break;
+                    }
+
+                    let row_count = rows.len() as u64;
+                    let rows_jsonl_gzip = encode_rows_as_gzip_jsonl(&rows, &table_name)?;
+                    tables.push(SnapshotTableChunk {
+                        table: table_name.clone(),
+                        sql,
+                        row_count,
+                        sequence: next_sequence,
+                        rows_jsonl_gzip,
+                    });
+
+                    rows_emitted = rows_emitted.saturating_add(row_count);
+                    next_sequence += 1;
+
+                    if row_count < limit {
+                        finished = true;
+                        break;
+                    }
+                }
+            } else {
+                let sql = build_snapshot_json_sql(&table_name, options.max_rows_per_table, None)?;
+                let rows = client
+                    .query(&sql, &[])
+                    .await
+                    .with_context(|| format!("failed to snapshot table {table_name}"))?;
+                let row_count = rows.len() as u64;
+                let rows_jsonl_gzip = encode_rows_as_gzip_jsonl(&rows, &table_name)?;
+                tables.push(SnapshotTableChunk {
+                    table: table_name.clone(),
+                    sql,
+                    row_count,
+                    sequence: next_sequence,
+                    rows_jsonl_gzip,
+                });
+                rows_emitted = row_count;
+                next_sequence += 1;
+                finished = options
+                    .max_rows_per_table
+                    .map(|limit| row_count < limit)
+                    .unwrap_or(true);
             }
 
-            let rows_jsonl_gzip = gzip_bytes(&jsonl)?;
-            tables.push(SnapshotTableChunk {
+            table_progress.push(SnapshotTableProgress {
                 table: table_name,
-                sql,
-                row_count,
-                sequence: 0,
-                rows_jsonl_gzip,
+                next_sequence,
+                finished,
+                rows_emitted,
             });
         }
 
         Ok(SnapshotExecutionReport {
             source_kind: "postgres".to_string(),
             tables,
+            table_progress,
         })
     }
 }
@@ -443,15 +525,37 @@ fn quote_qualified_table(table_name: &str) -> String {
     )
 }
 
-fn build_snapshot_json_sql(table_name: &str, max_rows: Option<u64>) -> anyhow::Result<String> {
+fn build_snapshot_json_sql(
+    table_name: &str,
+    limit: Option<u64>,
+    offset: Option<u64>,
+) -> anyhow::Result<String> {
     let table = quote_qualified_table(table_name);
     let mut sql = format!(
         "SELECT to_jsonb(snapshot_row) AS record FROM (SELECT * FROM {table}) AS snapshot_row"
     );
-    if let Some(limit) = max_rows {
+    if let Some(limit) = limit {
         sql.push_str(&format!(" LIMIT {limit}"));
     }
+    if let Some(offset) = offset {
+        sql.push_str(&format!(" OFFSET {offset}"));
+    }
     Ok(sql)
+}
+
+fn encode_rows_as_gzip_jsonl(
+    rows: &[tokio_postgres::Row],
+    table_name: &str,
+) -> anyhow::Result<Vec<u8>> {
+    let mut jsonl = Vec::new();
+    for row in rows {
+        let value: serde_json::Value = read_json_value(row, "record")?;
+        serde_json::to_writer(&mut jsonl, &value)
+            .with_context(|| format!("failed to encode staged row for {table_name}"))?;
+        jsonl.push(b'\n');
+    }
+
+    gzip_bytes(&jsonl)
 }
 
 fn read_json_value(row: &tokio_postgres::Row, column: &str) -> anyhow::Result<serde_json::Value> {
@@ -519,7 +623,15 @@ mod tests {
     #[test]
     fn snapshot_json_sql_wraps_rows_as_json() {
         assert_eq!(
-            build_snapshot_json_sql("public.orders", Some(25)).expect("sql builds"),
+            build_snapshot_json_sql("public.orders", Some(25), Some(50)).expect("sql builds"),
+            "SELECT to_jsonb(snapshot_row) AS record FROM (SELECT * FROM \"public\".\"orders\") AS snapshot_row LIMIT 25 OFFSET 50"
+        );
+    }
+
+    #[test]
+    fn snapshot_json_sql_omits_offset_when_not_requested() {
+        assert_eq!(
+            build_snapshot_json_sql("public.orders", Some(25), None).expect("sql builds"),
             "SELECT to_jsonb(snapshot_row) AS record FROM (SELECT * FROM \"public\".\"orders\") AS snapshot_row LIMIT 25"
         );
     }

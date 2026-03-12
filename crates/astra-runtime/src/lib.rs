@@ -9,9 +9,10 @@ use aws_sdk_s3::{
 };
 use serde::{Deserialize, Serialize};
 use std::{
+    collections::BTreeMap,
     fs,
     io::{Read, Write},
-    path::PathBuf,
+    path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -431,6 +432,127 @@ impl StageChunkStore for MinioStageChunkStore {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct SnapshotCheckpointLedger {
+    pub pipeline_name: String,
+    pub updated_at_unix_ms: u64,
+    #[serde(default)]
+    pub tables: BTreeMap<String, SnapshotTableCheckpoint>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct SnapshotTableCheckpoint {
+    pub next_sequence: u64,
+    pub rows_staged: u64,
+    pub last_chunk_key: Option<String>,
+    pub completed: bool,
+    pub updated_at_unix_ms: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct LocalCheckpointStore {
+    root_dir: PathBuf,
+}
+
+impl LocalCheckpointStore {
+    pub fn new(root_dir: PathBuf) -> Self {
+        Self { root_dir }
+    }
+
+    pub fn root_dir(&self) -> &Path {
+        &self.root_dir
+    }
+
+    pub fn ensure_ready(&self) -> Result<()> {
+        fs::create_dir_all(&self.root_dir).with_context(|| {
+            format!(
+                "failed to create local checkpoint root at {}",
+                self.root_dir.display()
+            )
+        })
+    }
+
+    pub fn ledger_path(&self, pipeline_name: &str) -> PathBuf {
+        self.root_dir.join(format!(
+            "{}.snapshot-checkpoints.json",
+            sanitize_name(pipeline_name)
+        ))
+    }
+
+    pub fn load(&self, pipeline_name: &str) -> Result<SnapshotCheckpointLedger> {
+        self.ensure_ready()?;
+        let path = self.ledger_path(pipeline_name);
+        if !path.exists() {
+            return Ok(SnapshotCheckpointLedger {
+                pipeline_name: pipeline_name.to_string(),
+                updated_at_unix_ms: unix_time_ms(),
+                tables: BTreeMap::new(),
+            });
+        }
+
+        let raw = fs::read_to_string(&path)
+            .with_context(|| format!("failed to read checkpoint ledger at {}", path.display()))?;
+        let mut ledger: SnapshotCheckpointLedger = serde_json::from_str(&raw)
+            .with_context(|| format!("failed to parse checkpoint ledger at {}", path.display()))?;
+        if ledger.pipeline_name.is_empty() {
+            ledger.pipeline_name = pipeline_name.to_string();
+        }
+        Ok(ledger)
+    }
+
+    pub fn save(&self, ledger: &SnapshotCheckpointLedger) -> Result<()> {
+        self.ensure_ready()?;
+        let path = self.ledger_path(&ledger.pipeline_name);
+        let payload =
+            serde_json::to_vec_pretty(ledger).context("failed to encode checkpoint ledger")?;
+        let mut file = fs::File::create(&path)
+            .with_context(|| format!("failed to create checkpoint ledger at {}", path.display()))?;
+        file.write_all(&payload)
+            .with_context(|| format!("failed to write checkpoint ledger at {}", path.display()))?;
+        file.write_all(b"\n").with_context(|| {
+            format!("failed to finalize checkpoint ledger at {}", path.display())
+        })?;
+        file.sync_all()
+            .with_context(|| format!("failed to flush checkpoint ledger at {}", path.display()))
+    }
+
+    pub fn record_chunk_staged(
+        &self,
+        pipeline_name: &str,
+        table_name: &str,
+        sequence: u64,
+        row_count: u64,
+        chunk_key: &str,
+    ) -> Result<SnapshotCheckpointLedger> {
+        let mut ledger = self.load(pipeline_name)?;
+        let now = unix_time_ms();
+        let checkpoint = ledger.tables.entry(table_name.to_string()).or_default();
+        checkpoint.next_sequence = sequence + 1;
+        checkpoint.rows_staged = checkpoint.rows_staged.saturating_add(row_count);
+        checkpoint.last_chunk_key = Some(chunk_key.to_string());
+        checkpoint.completed = false;
+        checkpoint.updated_at_unix_ms = now;
+        ledger.updated_at_unix_ms = now;
+        self.save(&ledger)?;
+        Ok(ledger)
+    }
+
+    pub fn mark_table_complete(
+        &self,
+        pipeline_name: &str,
+        table_name: &str,
+    ) -> Result<SnapshotCheckpointLedger> {
+        let mut ledger = self.load(pipeline_name)?;
+        let now = unix_time_ms();
+        let checkpoint = ledger.tables.entry(table_name.to_string()).or_default();
+        checkpoint.completed = true;
+        checkpoint.updated_at_unix_ms = now;
+        ledger.updated_at_unix_ms = now;
+        self.save(&ledger)?;
+        Ok(ledger)
+    }
+}
+
 pub fn build_chunk_key(
     pipeline_name: &str,
     stream_name: &str,
@@ -444,6 +566,16 @@ pub fn build_chunk_key(
 
 fn normalize_prefix(prefix: &str) -> String {
     prefix.trim().trim_matches('/').to_string()
+}
+
+fn sanitize_name(value: &str) -> String {
+    value
+        .chars()
+        .map(|ch| match ch {
+            'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '_' => ch,
+            _ => '-',
+        })
+        .collect()
 }
 
 fn ensure_chunk_belongs_to_bucket(expected_bucket: &str, chunk: &StageChunk) -> Result<()> {
@@ -652,5 +784,36 @@ mod tests {
         assert_eq!(config.region, DEFAULT_AWS_REGION);
         assert_eq!(config.access_key, "astra");
         assert_eq!(config.secret_key, "astrastorage");
+    }
+
+    #[test]
+    fn checkpoint_store_persists_resume_state() {
+        let root_dir = temp_root("checkpoint-store");
+        let store = LocalCheckpointStore::new(root_dir.clone());
+
+        store
+            .record_chunk_staged(
+                "postgres-analytics",
+                "public.orders",
+                0,
+                500,
+                "dev/pipelines/postgres-analytics/streams/public.orders/partitions/default/chunks/00000000000000000000.jsonl.gz",
+            )
+            .expect("checkpoint writes");
+        store
+            .mark_table_complete("postgres-analytics", "public.orders")
+            .expect("completion writes");
+
+        let ledger = store.load("postgres-analytics").expect("ledger loads");
+        let checkpoint = ledger.tables.get("public.orders").expect("table exists");
+        assert_eq!(checkpoint.next_sequence, 1);
+        assert_eq!(checkpoint.rows_staged, 500);
+        assert!(checkpoint.completed);
+        assert_eq!(
+            checkpoint.last_chunk_key.as_deref(),
+            Some("dev/pipelines/postgres-analytics/streams/public.orders/partitions/default/chunks/00000000000000000000.jsonl.gz")
+        );
+
+        fs::remove_dir_all(root_dir).ok();
     }
 }
