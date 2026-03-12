@@ -35,6 +35,7 @@ See the docs folder for the real details instead of README cosplay.
 - YAML spec draft: `docs/architecture/yaml-spec-draft.md`
 - Staging contract draft: `docs/architecture/staging-contract.md`
 - Example pipeline config: `examples/postgres-to-warehouse.astra.yaml`
+- End-to-end YAML contract smoke test: `python3 scripts/yaml_contract_smoke.py`
 - Kanban + epics + issue seed: `docs/product/kanban-and-issue-seed.md`
 - v0.1 roadmap: `docs/product/v0.1-roadmap.md`
 - ADR: `docs/decisions/adr-0001-modular-monolith.md`
