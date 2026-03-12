@@ -32,9 +32,32 @@ See the docs folder for the real details instead of README cosplay.
 
 - Product brief: `docs/product/brief.md`
 - Architecture RFC: `docs/architecture/rfc-0001-v1-architecture.md`
+- YAML spec draft: `docs/architecture/yaml-spec-draft.md`
+- Example pipeline config: `examples/postgres-to-warehouse.astra.yaml`
 - Kanban + epics + issue seed: `docs/product/kanban-and-issue-seed.md`
 - v0.1 roadmap: `docs/product/v0.1-roadmap.md`
 - ADR: `docs/decisions/adr-0001-modular-monolith.md`
+
+## Local development stack
+
+Astra includes a minimal local dependency stack at `deploy/docker-compose/docker-compose.yml`.
+
+Start it with:
+
+```bash
+docker compose -f deploy/docker-compose/docker-compose.yml up -d
+```
+
+Stop it with:
+
+```bash
+docker compose -f deploy/docker-compose/docker-compose.yml down
+```
+
+Default local ports:
+- Postgres metadata/state: `5432`
+- MinIO S3 API: `9000`
+- MinIO console: `9001`
 
 ## Suggested repo layout
 
