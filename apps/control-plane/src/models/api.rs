@@ -1,4 +1,6 @@
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 #[derive(Debug, Serialize)]
 pub struct PipelineSummaryResponse {
@@ -27,4 +29,74 @@ pub struct ApplySpecResponse {
     pub spec_version: i32,
     pub content_hash: String,
     pub message: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreatePipelineRunRequest {
+    pub pipeline_name: String,
+    pub trigger_mode: String,
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default)]
+    pub worker_id: Option<String>,
+    #[serde(default)]
+    pub started_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PipelineRunResponse {
+    pub id: Uuid,
+    pub pipeline_name: String,
+    pub trigger_mode: String,
+    pub status: String,
+    pub worker_id: Option<String>,
+    pub started_at: DateTime<Utc>,
+    pub finished_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PipelineRunsResponse {
+    pub runs: Vec<PipelineRunResponse>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RecordStagedArtifactRequest {
+    pub stream_name: String,
+    pub partition_key: String,
+    pub sequence: i64,
+    pub bucket: String,
+    pub object_key: String,
+    pub bytes_written: i64,
+    pub row_count: i64,
+    pub content_type: String,
+    pub content_encoding: String,
+    #[serde(default)]
+    pub schema_fingerprint: Option<String>,
+    #[serde(default)]
+    pub metadata_json: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct StagedArtifactResponse {
+    pub id: Uuid,
+    pub pipeline_run_id: Uuid,
+    pub stream_name: String,
+    pub partition_key: String,
+    pub sequence: i64,
+    pub bucket: String,
+    pub object_key: String,
+    pub bytes_written: i64,
+    pub row_count: i64,
+    pub content_type: String,
+    pub content_encoding: String,
+    pub schema_fingerprint: Option<String>,
+    pub metadata_json: serde_json::Value,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct StagedArtifactsResponse {
+    pub artifacts: Vec<StagedArtifactResponse>,
 }
