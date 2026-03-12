@@ -1,4 +1,12 @@
 use anyhow::{anyhow, Context, Result};
+use async_trait::async_trait;
+use aws_config::{self, BehaviorVersion};
+use aws_credential_types::Credentials;
+use aws_sdk_s3::{
+    config::{Builder as S3ConfigBuilder, Region},
+    primitives::ByteStream,
+    Client,
+};
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
@@ -10,6 +18,7 @@ use std::{
 pub const CRATE_NAME: &str = "astra-runtime";
 pub const STAGING_CONTENT_TYPE_JSONL: &str = "application/x-ndjson";
 pub const STAGING_CONTENT_ENCODING_GZIP: &str = "gzip";
+pub const DEFAULT_AWS_REGION: &str = "us-east-1";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -68,6 +77,57 @@ impl StagingConfig {
 pub struct LocalStagingConfig {
     pub root_dir: PathBuf,
     pub storage: StagingConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MinioStagingConfig {
+    pub endpoint: String,
+    pub region: String,
+    pub access_key: String,
+    pub secret_key: String,
+    pub storage: StagingConfig,
+}
+
+impl MinioStagingConfig {
+    pub fn from_env(storage: StagingConfig) -> Result<Self> {
+        Ok(Self {
+            endpoint: required_env("ASTRA_S3_ENDPOINT")?,
+            region: std::env::var("AWS_REGION")
+                .ok()
+                .or_else(|| std::env::var("ASTRA_S3_REGION").ok())
+                .unwrap_or_else(|| DEFAULT_AWS_REGION.to_string()),
+            access_key: std::env::var("AWS_ACCESS_KEY_ID")
+                .ok()
+                .or_else(|| std::env::var("ASTRA_S3_ACCESS_KEY").ok())
+                .context("missing ASTRA_S3_ACCESS_KEY or AWS_ACCESS_KEY_ID")?,
+            secret_key: std::env::var("AWS_SECRET_ACCESS_KEY")
+                .ok()
+                .or_else(|| std::env::var("ASTRA_S3_SECRET_KEY").ok())
+                .context("missing ASTRA_S3_SECRET_KEY or AWS_SECRET_ACCESS_KEY")?,
+            storage,
+        })
+    }
+
+    async fn s3_client(&self) -> Result<Client> {
+        let shared_config = aws_config::defaults(BehaviorVersion::latest())
+            .credentials_provider(Credentials::new(
+                self.access_key.clone(),
+                self.secret_key.clone(),
+                None,
+                None,
+                "astra-minio-stage-store",
+            ))
+            .region(Region::new(self.region.clone()))
+            .load()
+            .await;
+
+        let s3_config = S3ConfigBuilder::from(&shared_config)
+            .endpoint_url(self.endpoint.clone())
+            .force_path_style(true)
+            .build();
+
+        Ok(Client::from_conf(s3_config))
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -131,10 +191,11 @@ pub struct SinkCommit {
     pub rows_written: u64,
 }
 
+#[async_trait]
 pub trait StageChunkStore {
-    fn ensure_ready(&self) -> Result<()>;
-    fn write_chunk(&self, request: StageChunkRequest) -> Result<StageChunk>;
-    fn read_chunk(&self, chunk: &StageChunk) -> Result<Vec<u8>>;
+    async fn ensure_ready(&self) -> Result<()>;
+    async fn write_chunk(&self, request: StageChunkRequest) -> Result<StageChunk>;
+    async fn read_chunk(&self, chunk: &StageChunk) -> Result<Vec<u8>>;
 }
 
 #[derive(Debug, Clone)]
@@ -163,8 +224,9 @@ impl LocalStageChunkStore {
     }
 }
 
+#[async_trait]
 impl StageChunkStore for LocalStageChunkStore {
-    fn ensure_ready(&self) -> Result<()> {
+    async fn ensure_ready(&self) -> Result<()> {
         fs::create_dir_all(self.bucket_root()).with_context(|| {
             format!(
                 "failed to create local staging bucket root at {}",
@@ -173,8 +235,8 @@ impl StageChunkStore for LocalStageChunkStore {
         })
     }
 
-    fn write_chunk(&self, request: StageChunkRequest) -> Result<StageChunk> {
-        self.ensure_ready()?;
+    async fn write_chunk(&self, request: StageChunkRequest) -> Result<StageChunk> {
+        self.ensure_ready().await?;
         let chunk = request.to_chunk(&self.config.storage);
         let path = self.resolve_path(&chunk.object_key);
         if let Some(parent) = path.parent() {
@@ -196,7 +258,7 @@ impl StageChunkStore for LocalStageChunkStore {
         Ok(chunk)
     }
 
-    fn read_chunk(&self, chunk: &StageChunk) -> Result<Vec<u8>> {
+    async fn read_chunk(&self, chunk: &StageChunk) -> Result<Vec<u8>> {
         ensure_chunk_belongs_to_bucket(&self.config.storage.bucket, chunk)?;
         let path = self.resolve_path(&chunk.object_key);
         let mut file = fs::File::open(&path)
@@ -205,6 +267,90 @@ impl StageChunkStore for LocalStageChunkStore {
         file.read_to_end(&mut bytes)
             .with_context(|| format!("failed to read staged chunk at {}", path.display()))?;
         Ok(bytes)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct MinioStageChunkStore {
+    config: MinioStagingConfig,
+}
+
+impl MinioStageChunkStore {
+    pub fn new(config: MinioStagingConfig) -> Self {
+        Self { config }
+    }
+
+    pub fn config(&self) -> &MinioStagingConfig {
+        &self.config
+    }
+}
+
+#[async_trait]
+impl StageChunkStore for MinioStageChunkStore {
+    async fn ensure_ready(&self) -> Result<()> {
+        let client = self.config.s3_client().await?;
+        let bucket = &self.config.storage.bucket;
+
+        match client.head_bucket().bucket(bucket).send().await {
+            Ok(_) => Ok(()),
+            Err(_) => {
+                client
+                    .create_bucket()
+                    .bucket(bucket)
+                    .send()
+                    .await
+                    .with_context(|| format!("failed to create staging bucket {bucket}"))?;
+                Ok(())
+            }
+        }
+    }
+
+    async fn write_chunk(&self, request: StageChunkRequest) -> Result<StageChunk> {
+        self.ensure_ready().await?;
+        let client = self.config.s3_client().await?;
+        let chunk = request.to_chunk(&self.config.storage);
+
+        client
+            .put_object()
+            .bucket(&chunk.bucket)
+            .key(&chunk.object_key)
+            .content_type(chunk.content_type.clone())
+            .content_encoding(chunk.content_encoding.clone())
+            .body(ByteStream::from(request.payload.bytes))
+            .send()
+            .await
+            .with_context(|| {
+                format!(
+                    "failed to write staged chunk to s3://{}/{} via {}",
+                    chunk.bucket, chunk.object_key, self.config.endpoint
+                )
+            })?;
+
+        Ok(chunk)
+    }
+
+    async fn read_chunk(&self, chunk: &StageChunk) -> Result<Vec<u8>> {
+        ensure_chunk_belongs_to_bucket(&self.config.storage.bucket, chunk)?;
+        let client = self.config.s3_client().await?;
+        let output = client
+            .get_object()
+            .bucket(&chunk.bucket)
+            .key(&chunk.object_key)
+            .send()
+            .await
+            .with_context(|| {
+                format!(
+                    "failed to read staged chunk from s3://{}/{} via {}",
+                    chunk.bucket, chunk.object_key, self.config.endpoint
+                )
+            })?;
+
+        let aggregated = output
+            .body
+            .collect()
+            .await
+            .context("failed to collect staged object body")?;
+        Ok(aggregated.into_bytes().to_vec())
     }
 }
 
@@ -233,6 +379,10 @@ fn ensure_chunk_belongs_to_bucket(expected_bucket: &str, chunk: &StageChunk) -> 
             chunk.bucket
         ))
     }
+}
+
+fn required_env(name: &str) -> Result<String> {
+    std::env::var(name).with_context(|| format!("missing {name}"))
 }
 
 fn unix_time_ms() -> u64 {
@@ -277,8 +427,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn local_store_writes_and_reads_chunks() {
+    #[tokio::test]
+    async fn local_store_writes_and_reads_chunks() {
         let root_dir = temp_root("write-read");
         let store = LocalStageChunkStore::new(LocalStagingConfig {
             root_dir: root_dir.clone(),
@@ -297,7 +447,7 @@ mod tests {
             payload: StageChunkPayload::jsonl_gzip(2, b"pretend-gzip-jsonl".to_vec()),
         };
 
-        let chunk = store.write_chunk(request).expect("chunk writes");
+        let chunk = store.write_chunk(request).await.expect("chunk writes");
         assert_eq!(chunk.bucket, "astra-staging");
         assert_eq!(chunk.row_count, 2);
         assert_eq!(chunk.bytes_written, 18);
@@ -313,14 +463,14 @@ mod tests {
             resolved.display()
         );
 
-        let bytes = store.read_chunk(&chunk).expect("chunk reads");
+        let bytes = store.read_chunk(&chunk).await.expect("chunk reads");
         assert_eq!(bytes, b"pretend-gzip-jsonl");
 
         fs::remove_dir_all(root_dir).ok();
     }
 
-    #[test]
-    fn local_store_rejects_bucket_mismatch() {
+    #[tokio::test]
+    async fn local_store_rejects_bucket_mismatch() {
         let root_dir = temp_root("bucket-mismatch");
         let store = LocalStageChunkStore::new(LocalStagingConfig {
             root_dir: root_dir.clone(),
@@ -331,7 +481,7 @@ mod tests {
             },
         });
 
-        store.ensure_ready().expect("store initializes");
+        store.ensure_ready().await.expect("store initializes");
         let chunk = StageChunk {
             pipeline_name: "postgres-analytics".to_string(),
             stream_name: "public.orders".to_string(),
@@ -349,9 +499,30 @@ mod tests {
 
         let error = store
             .read_chunk(&chunk)
+            .await
             .expect_err("bucket mismatch should fail");
         assert!(error.to_string().contains("chunk bucket mismatch"));
 
         fs::remove_dir_all(root_dir).ok();
+    }
+
+    #[test]
+    fn minio_config_reads_local_first_env() {
+        let storage = StagingConfig {
+            kind: StagingKind::Minio,
+            bucket: "astra-staging".to_string(),
+            prefix: "dev".to_string(),
+        };
+        std::env::set_var("ASTRA_S3_ENDPOINT", "http://127.0.0.1:9000");
+        std::env::set_var("ASTRA_S3_ACCESS_KEY", "astra");
+        std::env::set_var("ASTRA_S3_SECRET_KEY", "astrastorage");
+        std::env::remove_var("ASTRA_S3_REGION");
+        std::env::remove_var("AWS_REGION");
+
+        let config = MinioStagingConfig::from_env(storage).expect("env config loads");
+        assert_eq!(config.endpoint, "http://127.0.0.1:9000");
+        assert_eq!(config.region, DEFAULT_AWS_REGION);
+        assert_eq!(config.access_key, "astra");
+        assert_eq!(config.secret_key, "astrastorage");
     }
 }

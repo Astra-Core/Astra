@@ -146,6 +146,19 @@ cargo run -p astra -- snapshot-to-local-staging examples/postgres-to-warehouse.a
 
 That flow reuses the Postgres connector for discovery plus snapshot reads, converts rows to JSONL.gz in-process, and writes one staged chunk per captured table via the filesystem-backed staging adapter. It's intentionally narrow: no sink apply yet, no resume/checkpoint loop yet, and no fake cloud dependencies.
 
+If you want the same flow against a local MinIO bucket instead of the filesystem, bring up the Podman Compose stack and run:
+
+```bash
+export POSTGRES_PASSWORD=astra
+export ASTRA_S3_ENDPOINT=http://127.0.0.1:9000
+export ASTRA_S3_REGION=us-east-1
+export ASTRA_S3_ACCESS_KEY=astra
+export ASTRA_S3_SECRET_KEY=astrastorage
+cargo run -p astra -- snapshot-to-minio-staging examples/postgres-to-warehouse.astra.yaml --max-rows-per-table 1000
+```
+
+That uses the same staging contract and object-key layout, just backed by a MinIO/S3-compatible adapter instead of local files. Same chunks, less pretending.
+
 The shell is intentionally lightweight and the React + TypeScript follow-up is tracked in issue #26.
 
 ## Status

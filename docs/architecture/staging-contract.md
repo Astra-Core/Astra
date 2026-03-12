@@ -81,11 +81,43 @@ The implemented `LocalStageChunkStore` writes chunks to:
 
 That means local Podman-based development can stage chunks without requiring a running object-store client SDK, while still matching the same key layout a future MinIO-backed adapter will use.
 
+## MinIO / S3-compatible adapter expectations
+The next adapter keeps the exact same `StageChunkStore` contract and swaps the backing store from the filesystem to a bucket reachable over an S3-compatible API.
+
+Current v0.1 behavior:
+- uses an explicit endpoint URL, access key, and secret key
+- forces path-style addressing so local MinIO behaves predictably
+- ensures the bucket exists before writing the first chunk
+- writes chunk payload bytes with the same object key convention as local staging
+- reads chunk bytes back for replay/retry paths
+- keeps the contract local-first instead of pretending cloud-only defaults are acceptable
+
+The runtime crate now includes `MinioStageChunkStore`, and the CLI exposes `snapshot-to-minio-staging` so the same snapshot flow can write directly into a local Podman-managed MinIO instance.
+
 ## Podman-based local development
-The repo already ships a MinIO service in the local Podman Compose stack. The local filesystem adapter is the smallest useful default for dev/test loops, and the same `bucket + prefix + object_key` contract keeps the path to MinIO-compatible writes straightforward when the next adapter lands.
+The repo ships a MinIO service in the local Podman Compose stack.
+
+Bring it up with:
+
+```bash
+podman compose -f deploy/docker-compose/docker-compose.yml up -d
+```
+
+With the default local credentials from `.env.example`, the MinIO-backed staging path can be exercised with:
+
+```bash
+export POSTGRES_PASSWORD=astra
+export ASTRA_S3_ENDPOINT=http://127.0.0.1:9000
+export ASTRA_S3_REGION=us-east-1
+export ASTRA_S3_ACCESS_KEY=astra
+export ASTRA_S3_SECRET_KEY=astrastorage
+cargo run -p astra -- snapshot-to-minio-staging examples/postgres-to-warehouse.astra.yaml --max-rows-per-table 1000
+```
+
+If MinIO is not running, the filesystem adapter is still the cheapest dev/test loop.
 
 ## Open questions
 - whether v0.1 should standardize on JSONL.gz or allow Parquet early
 - whether a separate apply ledger is cleaner than embedding sink commit markers in checkpoints
 - when to introduce per-destination staging format negotiation
-- whether the MinIO/S3 adapter should live in `astra-runtime` or a dedicated storage crate once there is more than one real backend
+- when it becomes worth splitting staging backends into a dedicated storage crate instead of keeping the first two adapters in `astra-runtime`
