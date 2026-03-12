@@ -1,0 +1,40 @@
+version: v1alpha1
+pipeline:
+  name: postgres-analytics
+  mode: cdc
+  schedule: continuous
+source:
+  kind: postgres
+  connection:
+    host: localhost
+    port: 5432
+    database: app
+    username: app_user
+    passwordRef: env:POSTGRES_PASSWORD
+  capture:
+    tables:
+      - public.users
+      - public.orders
+    snapshot:
+      mode: incremental
+      chunkSize: 50000
+    cdc:
+      slotName: astra_slot
+      publicationName: astra_publication
+destination:
+  kind: snowflake
+  staging:
+    kind: s3
+    bucket: astra-staging
+    prefix: postgres-analytics/
+  write:
+    mode: merge
+    batchSize: 100000
+runtime:
+  parallelism:
+    tables: 4
+  checkpointing:
+    intervalSeconds: 30
+  schemaEvolution:
+    additiveChanges: auto-apply
+    breakingChanges: pause
