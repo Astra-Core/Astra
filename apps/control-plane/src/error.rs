@@ -28,6 +28,10 @@ impl IntoResponse for AppError {
 
 impl From<anyhow::Error> for AppError {
     fn from(value: anyhow::Error) -> Self {
+        if let Some(validation) = value.downcast_ref::<astra_yaml::ValidationError>() {
+            return Self::BadRequest(validation.to_string());
+        }
+
         Self::Internal(value.to_string())
     }
 }
