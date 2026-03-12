@@ -13,6 +13,11 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+chrono.workspace = true
+uuid.workspace = true
+thiserror.workspace = true
+async-trait = "0.1"
+sha2 = "0.10"
 astra-api = { path = "../../crates/astra-api" }
 astra-core = { path = "../../crates/astra-core" }
 astra-metadata = { path = "../../crates/astra-metadata" }
