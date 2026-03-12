@@ -97,15 +97,33 @@ deploy/
 4. Add object-storage staging and one destination loader
 5. Add UI onboarding and job history
 
-## Running the current web shell
+## Running the current web app foundation
 
-The temporary onboarding/job-status shell lives in `apps/web` and is served by the control-plane app.
+The React + TypeScript web app foundation lives in `apps/web`.
+
+For backend-only work, run the control plane from the repo root:
 
 ```bash
 cargo run -p astra-control-plane
 ```
 
-Then open <http://127.0.0.1:8080>.
+For frontend development, run the control plane in one terminal, then in `apps/web/` run:
+
+```bash
+npm install
+npm run dev
+```
+
+Open <http://127.0.0.1:4173> for the Vite dev server.
+
+For a self-hosted frontend build served by the Rust control plane, in `apps/web/` run:
+
+```bash
+npm install
+npm run build
+```
+
+Then open <http://127.0.0.1:8080> after starting `cargo run -p astra-control-plane`.
 
 If `ASTRA_DATABASE_URL` points at a reachable Postgres instance, the control plane now persists applied pipeline specs and pipeline summaries there. If not, it falls back to in-memory storage so local hacking still works instead of faceplanting.
 
@@ -117,6 +135,16 @@ cargo run -p astra -- discover-source examples/postgres-to-warehouse.astra.yaml
 ```
 
 That currently does the minimum useful thing: parse and validate the Postgres source config, inspect table schemas from a reachable Postgres instance, and emit a snapshot-oriented SQL plan for the captured tables.
+
+There is also a first honest execution slice for local/self-hosted development:
+
+```bash
+export POSTGRES_PASSWORD=...
+export ASTRA_STAGING_LOCAL_ROOT=.astra/staging
+cargo run -p astra -- snapshot-to-local-staging examples/postgres-to-warehouse.astra.yaml --max-rows-per-table 1000
+```
+
+That flow reuses the Postgres connector for discovery plus snapshot reads, converts rows to JSONL.gz in-process, and writes one staged chunk per captured table via the filesystem-backed staging adapter. It's intentionally narrow: no sink apply yet, no resume/checkpoint loop yet, and no fake cloud dependencies.
 
 The shell is intentionally lightweight and the React + TypeScript follow-up is tracked in issue #26.
 

@@ -1,7 +1,7 @@
 use anyhow::{anyhow, bail, Context};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use tokio_postgres::{Client, NoTls};
+use tokio_postgres::{types::Type, Client, NoTls};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PostgresConnectionConfig {
@@ -84,6 +84,29 @@ pub struct DiscoverReport {
     pub snapshot_plan: PostgresSnapshotPlan,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SnapshotExecutionOptions {
+    #[serde(default)]
+    pub tables: Vec<String>,
+    #[serde(default)]
+    pub max_rows_per_table: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SnapshotTableChunk {
+    pub table: String,
+    pub sql: String,
+    pub row_count: u64,
+    pub sequence: u64,
+    pub rows_jsonl_gzip: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SnapshotExecutionReport {
+    pub source_kind: String,
+    pub tables: Vec<SnapshotTableChunk>,
+}
+
 pub struct PostgresSource {
     config: PostgresSourceConfig,
 }
@@ -164,6 +187,52 @@ impl PostgresSource {
                 tables,
             },
             snapshot_plan: self.snapshot_plan(),
+        })
+    }
+
+    pub async fn snapshot_to_jsonl_gzip(
+        &self,
+        options: SnapshotExecutionOptions,
+    ) -> anyhow::Result<SnapshotExecutionReport> {
+        let target_tables = if options.tables.is_empty() {
+            self.config.tables.clone()
+        } else {
+            normalize_tables(&options.tables)?
+        };
+
+        let client = connect(&self.config.connection).await?;
+        let mut tables = Vec::new();
+
+        for table_name in target_tables {
+            let sql = build_snapshot_json_sql(&table_name, options.max_rows_per_table)?;
+            let rows = client
+                .query(&sql, &[])
+                .await
+                .with_context(|| format!("failed to snapshot table {table_name}"))?;
+
+            let mut jsonl = Vec::new();
+            let mut row_count = 0_u64;
+            for row in rows {
+                let value: serde_json::Value = read_json_value(&row, "record")?;
+                serde_json::to_writer(&mut jsonl, &value)
+                    .with_context(|| format!("failed to encode staged row for {table_name}"))?;
+                jsonl.push(b'\n');
+                row_count += 1;
+            }
+
+            let rows_jsonl_gzip = gzip_bytes(&jsonl)?;
+            tables.push(SnapshotTableChunk {
+                table: table_name,
+                sql,
+                row_count,
+                sequence: 0,
+                rows_jsonl_gzip,
+            });
+        }
+
+        Ok(SnapshotExecutionReport {
+            source_kind: "postgres".to_string(),
+            tables,
         })
     }
 }
@@ -374,9 +443,47 @@ fn quote_qualified_table(table_name: &str) -> String {
     )
 }
 
+fn build_snapshot_json_sql(table_name: &str, max_rows: Option<u64>) -> anyhow::Result<String> {
+    let table = quote_qualified_table(table_name);
+    let mut sql = format!(
+        "SELECT to_jsonb(snapshot_row) AS record FROM (SELECT * FROM {table}) AS snapshot_row"
+    );
+    if let Some(limit) = max_rows {
+        sql.push_str(&format!(" LIMIT {limit}"));
+    }
+    Ok(sql)
+}
+
+fn read_json_value(row: &tokio_postgres::Row, column: &str) -> anyhow::Result<serde_json::Value> {
+    let idx = row
+        .columns()
+        .iter()
+        .position(|candidate| candidate.name() == column)
+        .ok_or_else(|| anyhow!("column {column} was not returned from snapshot query"))?;
+
+    match *row.columns()[idx].type_() {
+        Type::JSON | Type::JSONB => Ok(row.get(idx)),
+        _ => bail!("snapshot query column {column} was not json/jsonb"),
+    }
+}
+
+fn gzip_bytes(input: &[u8]) -> anyhow::Result<Vec<u8>> {
+    use std::io::Write;
+
+    let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    encoder
+        .write_all(input)
+        .context("failed to gzip snapshot rows for staging")?;
+    encoder
+        .finish()
+        .context("failed to finalize gzipped snapshot rows")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use flate2::read::GzDecoder;
+    use std::io::Read;
 
     #[test]
     fn builds_source_from_example_spec() {
@@ -407,6 +514,24 @@ mod tests {
         assert_eq!(plan.tables[0].sql, "SELECT * FROM \"public\".\"orders\"");
         assert_eq!(plan.tables[0].chunk_size, Some(50000));
         assert_eq!(plan.tables[0].mode, "incremental");
+    }
+
+    #[test]
+    fn snapshot_json_sql_wraps_rows_as_json() {
+        assert_eq!(
+            build_snapshot_json_sql("public.orders", Some(25)).expect("sql builds"),
+            "SELECT to_jsonb(snapshot_row) AS record FROM (SELECT * FROM \"public\".\"orders\") AS snapshot_row LIMIT 25"
+        );
+    }
+
+    #[test]
+    fn gzip_helper_round_trips() {
+        let encoded = gzip_bytes(b"{\"id\":1}\n{\"id\":2}\n").expect("gzip works");
+        let mut decoded = String::new();
+        GzDecoder::new(encoded.as_slice())
+            .read_to_string(&mut decoded)
+            .expect("gzip decodes");
+        assert_eq!(decoded, "{\"id\":1}\n{\"id\":2}\n");
     }
 
     #[test]
