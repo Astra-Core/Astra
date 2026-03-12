@@ -73,6 +73,14 @@ button {
   font-size: 12px;
 }
 .muted { color: #a9b5e9; }
+.hidden { display: none; }
+code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: #0d1430;
+  border: 1px solid #27345f;
+  border-radius: 8px;
+  padding: 2px 6px;
+}
 pre {
   white-space: pre-wrap;
   overflow-x: auto;

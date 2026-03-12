@@ -11,10 +11,9 @@
       <aside class="sidebar">
         <div class="brand">Astra</div>
         <nav>
-          <a href="#pipelines">Pipelines</a>
-          <a href="#onboarding">Onboarding</a>
-          <a href="#runs">Runs</a>
-          <a href="#yaml">YAML</a>
+          <a href="#/onboarding">Onboarding</a>
+          <a href="#/job-status">Job status</a>
+          <a href="#/yaml">YAML</a>
         </nav>
       </aside>
       <main class="content">
@@ -26,34 +25,35 @@
           <button id="refreshBtn">Refresh</button>
         </header>
 
-        <section id="pipelines" class="card">
-          <h2>Pipelines</h2>
+        <section id="view-onboarding" class="card view">
+          <div class="grid">
+            <div>
+              <h2>Onboarding flow</h2>
+              <ol>
+                <li>Choose source</li>
+                <li>Choose destination</li>
+                <li>Review YAML</li>
+                <li>Validate</li>
+                <li>Apply</li>
+              </ol>
+            </div>
+            <div>
+              <h2>Canonical config model</h2>
+              <p>
+                The shell references Astra's YAML-first pipeline contract. The preview below is served from
+                <code>examples/postgres-to-warehouse.astra.yaml</code> so the UI stays anchored to the canonical config shape instead of inventing its own nonsense.
+              </p>
+            </div>
+          </div>
+        </section>
+
+        <section id="view-job-status" class="card view hidden">
+          <h2>Job status</h2>
+          <p class="muted">Stubbed operator view for pipeline runs, retries, and current state.</p>
           <div id="pipelinesList">Loading pipelines…</div>
         </section>
 
-        <section id="onboarding" class="card grid">
-          <div>
-            <h2>Onboarding flow</h2>
-            <ol>
-              <li>Choose source</li>
-              <li>Choose destination</li>
-              <li>Review YAML</li>
-              <li>Validate</li>
-              <li>Apply</li>
-            </ol>
-          </div>
-          <div>
-            <h2>Upcoming UI surfaces</h2>
-            <ul>
-              <li>Source + destination forms</li>
-              <li>Pipeline status page</li>
-              <li>Schema drift notices</li>
-              <li>Job history and logs</li>
-            </ul>
-          </div>
-        </section>
-
-        <section id="yaml" class="card">
+        <section id="view-yaml" class="card view hidden">
           <h2>YAML preview</h2>
           <pre id="yamlPreview">Loading example spec…</pre>
         </section>

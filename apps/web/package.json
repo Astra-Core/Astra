@@ -1,0 +1,10 @@
+{
+  "name": "@astra/web-shell",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Temporary Astra web shell for onboarding and job status while the React + TypeScript app lands.",
+  "scripts": {
+    "dev": "cargo run -p astra-control-plane",
+    "static": "python3 -m http.server 4173"
+  }
+}
