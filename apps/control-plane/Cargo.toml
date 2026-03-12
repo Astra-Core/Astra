@@ -19,6 +19,7 @@ thiserror.workspace = true
 async-trait = "0.1"
 sha2 = "0.10"
 tokio-postgres = { version = "0.7", features = ["with-uuid-1", "with-chrono-0_4", "with-serde_json-1"] }
+tower-http = { version = "0.5", features = ["fs", "trace"] }
 astra-api = { path = "../../crates/astra-api" }
 astra-core = { path = "../../crates/astra-core" }
 astra-metadata = { path = "../../crates/astra-metadata" }

@@ -1,10 +1,25 @@
 {
-  "name": "@astra/web-shell",
+  "name": "@astra/web",
   "private": true,
   "version": "0.1.0",
-  "description": "Temporary Astra web shell for onboarding and job status while the React + TypeScript app lands.",
+  "type": "module",
+  "description": "Astra web app foundation built with Vite, React, and TypeScript.",
   "scripts": {
-    "dev": "cargo run -p astra-control-plane",
-    "static": "python3 -m http.server 4173"
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.4",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "typescript": "^5.7.3",
+    "vite": "^5.4.11"
   }
 }
