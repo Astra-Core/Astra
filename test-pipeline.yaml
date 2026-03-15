@@ -1,0 +1,7 @@
+version: "1"
+pipeline:
+  name: test-pipeline
+source:
+  kind: postgres
+destination:
+  kind: s3

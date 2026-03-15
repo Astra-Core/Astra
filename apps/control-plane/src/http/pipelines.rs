@@ -10,6 +10,7 @@ use axum::{
     extract::{Path, State},
     Json,
 };
+use serde_json::Value;
 use uuid::Uuid;
 
 pub async fn list_pipelines(
@@ -83,6 +84,17 @@ pub async fn get_latest_run(
     Ok(Json(run))
 }
 
+pub async fn get_pipeline_yaml(
+    State(state): State<AppState>,
+    Path(pipeline_name): Path<String>,
+) -> Result<Json<Option<String>>, AppError> {
+    let yaml = state
+        .pipeline_service
+        .get_pipeline_yaml(&pipeline_name)
+        .await?;
+    Ok(Json(yaml))
+}
+
 pub async fn get_run_history(
     State(state): State<AppState>,
     Path(pipeline_name): Path<String>,
@@ -129,6 +141,18 @@ pub async fn record_staged_artifact(
         )
         .await?;
     Ok(Json(response))
+}
+
+pub async fn update_pipeline_run_status(
+    State(state): State<AppState>,
+    Path(run_id): Path<Uuid>,
+    Json(request): Json<crate::models::api::UpdatePipelineRunStatusRequest>,
+) -> Result<Json<crate::models::api::PipelineRunResponse>, AppError> {
+    let updated_run = state
+        .pipeline_service
+        .update_pipeline_run_status(run_id, request.status, request.stats_json)
+        .await?;
+    Ok(Json(updated_run))
 }
 
 pub async fn list_staged_artifacts(

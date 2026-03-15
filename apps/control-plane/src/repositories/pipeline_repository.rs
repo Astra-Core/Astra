@@ -38,6 +38,7 @@ pub struct PipelineRunRecord {
     pub finished_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    pub stats_json: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone)]
@@ -76,6 +77,13 @@ pub struct StagedArtifactRecord {
 
 #[async_trait]
 pub trait PipelineRepository: Send + Sync {
+    async fn get_pipeline_yaml(&self, pipeline_name: &str) -> anyhow::Result<Option<String>>;
+    async fn update_pipeline_run_status(
+        &self,
+        run_id: Uuid,
+        status: String,
+        stats_json: serde_json::Value,
+    ) -> anyhow::Result<PipelineRunRecord>;
     async fn list_pipelines(&self) -> anyhow::Result<Vec<PipelineRecord>>;
     async fn apply_spec(
         &self,

@@ -15,6 +15,10 @@ pub fn routes() -> Router<AppState> {
         .route("/version", get(health::version))
         .route("/api/v1/pipelines", get(pipelines::list_pipelines))
         .route(
+            "/api/v1/pipelines/:pipeline_name",
+            get(pipelines::get_pipeline_yaml),
+        )
+        .route(
             "/api/v1/pipelines/:pipeline_name/runs",
             get(pipelines::list_pipeline_runs),
         )
@@ -29,6 +33,10 @@ pub fn routes() -> Router<AppState> {
         .route(
             "/api/v1/pipeline-runs",
             post(pipelines::create_pipeline_run),
+        )
+        .route(
+            "/api/v1/pipeline-runs/:run_id/status",
+            post(pipelines::update_pipeline_run_status),
         )
         .route(
             "/api/v1/pipeline-runs/:pipeline_run_id/artifacts",

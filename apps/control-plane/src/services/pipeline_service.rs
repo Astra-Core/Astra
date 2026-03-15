@@ -80,6 +80,7 @@ impl PipelineService {
             finished_at: run.finished_at,
             created_at: run.created_at,
             updated_at: run.updated_at,
+            stats_json: run.stats_json,
         })
     }
 
@@ -100,6 +101,7 @@ impl PipelineService {
                 finished_at: run.finished_at,
                 created_at: run.created_at,
                 updated_at: run.updated_at,
+                stats_json: run.stats_json,
             })
             .collect())
     }
@@ -119,6 +121,7 @@ impl PipelineService {
             finished_at: run.finished_at,
             created_at: run.created_at,
             updated_at: run.updated_at,
+            stats_json: run.stats_json,
         }))
     }
 
@@ -143,6 +146,7 @@ impl PipelineService {
                 finished_at: run.finished_at,
                 created_at: run.created_at,
                 updated_at: run.updated_at,
+                stats_json: run.stats_json,
             })
             .collect())
     }
@@ -224,5 +228,33 @@ impl PipelineService {
                 created_at: artifact.created_at,
             })
             .collect())
+    }
+
+    pub async fn get_pipeline_yaml(&self, pipeline_name: &str) -> anyhow::Result<Option<String>> {
+        self.repository.get_pipeline_yaml(pipeline_name).await
+    }
+
+    pub async fn update_pipeline_run_status(
+        &self,
+        run_id: Uuid,
+        status: String,
+        stats_json: serde_json::Value,
+    ) -> anyhow::Result<PipelineRunResponse> {
+        let run = self
+            .repository
+            .update_pipeline_run_status(run_id, status, stats_json)
+            .await?;
+        Ok(PipelineRunResponse {
+            id: run.id,
+            pipeline_name: run.pipeline_name,
+            trigger_mode: run.trigger_mode,
+            status: run.status,
+            worker_id: run.worker_id,
+            started_at: run.started_at,
+            finished_at: run.finished_at,
+            created_at: run.created_at,
+            updated_at: run.updated_at,
+            stats_json: run.stats_json,
+        })
     }
 }

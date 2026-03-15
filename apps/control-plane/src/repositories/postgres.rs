@@ -115,6 +115,46 @@ impl PostgresPipelineRepository {
 
 #[async_trait]
 impl PipelineRepository for PostgresPipelineRepository {
+    async fn get_pipeline_yaml(&self, pipeline_name: &str) -> anyhow::Result<Option<String>> {
+        let client = self.client.lock().await;
+        let row = client
+            .query_opt(
+                r#"
+            SELECT ps.spec_yaml
+            FROM pipelines p
+            JOIN pipeline_specs ps ON ps.id = p.active_spec_id
+            WHERE p.name = $1
+            "#,
+                &[&pipeline_name],
+            )
+            .await
+            .context("failed to get pipeline yaml")?;
+        Ok(row.map(|r| r.get("spec_yaml")))
+    }
+
+    async fn update_pipeline_run_status(
+        &self,
+        run_id: Uuid,
+        status: String,
+        stats_json: serde_json::Value,
+    ) -> anyhow::Result<PipelineRunRecord> {
+        let client = self.client.lock().await;
+        let row = client.query_one(
+            r#"
+            UPDATE pipeline_runs pr
+            SET status = $1,
+                stats_json = $2,
+                finished_at = CASE WHEN $1 IN ('succeeded','failed','error') THEN NOW() ELSE pr.finished_at END,
+                updated_at = NOW()
+            FROM pipelines p
+            WHERE pr.id = $3 AND pr.pipeline_id = p.id
+            RETURNING pr.id, p.name AS pipeline_name, pr.trigger_mode, pr.status, pr.worker_id,
+                       pr.started_at, pr.finished_at, pr.created_at, pr.updated_at, pr.stats_json
+            "#,
+            &[&status, &tokio_postgres::types::Json(&stats_json), &run_id],
+        ).await.context("failed to update run status")?;
+        Ok(map_pipeline_run_row(row))
+    }
     async fn list_pipelines(&self) -> anyhow::Result<Vec<PipelineRecord>> {
         let rows = self
             .client
@@ -310,17 +350,7 @@ impl PipelineRepository for PostgresPipelineRepository {
             .await
             .with_context(|| format!("failed to create pipeline run for '{}'", run.pipeline_name))?;
 
-        Ok(PipelineRunRecord {
-            id: row.get("id"),
-            pipeline_name: run.pipeline_name,
-            trigger_mode: row.get("trigger_mode"),
-            status: row.get("status"),
-            worker_id: row.get("worker_id"),
-            started_at: row.get("started_at"),
-            finished_at: row.get("finished_at"),
-            created_at: row.get("created_at"),
-            updated_at: row.get("updated_at"),
-        })
+        Ok(map_pipeline_run_row(row))
     }
 
     async fn list_pipeline_runs(
@@ -473,6 +503,11 @@ impl PipelineRepository for PostgresPipelineRepository {
 }
 
 fn map_pipeline_run_row(row: Row) -> PipelineRunRecord {
+    let stats_json: Option<serde_json::Value> = row
+        .try_get::<_, Option<tokio_postgres::types::Json<serde_json::Value>>>("stats_json")
+        .ok()
+        .flatten()
+        .map(|j| j.0);
     PipelineRunRecord {
         id: row.get("id"),
         pipeline_name: row.get("pipeline_name"),
@@ -483,6 +518,7 @@ fn map_pipeline_run_row(row: Row) -> PipelineRunRecord {
         finished_at: row.get("finished_at"),
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
+        stats_json,
     }
 }
 
