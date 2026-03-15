@@ -103,8 +103,19 @@ pub struct StagedArtifactsResponse {
     pub artifacts: Vec<StagedArtifactResponse>,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct Progress {
+    pub current: u32,
+    pub total: u32,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct UpdatePipelineRunStatusRequest {
     pub status: String,
-    pub stats_json: serde_json::Value,
+    #[serde(default)]
+    pub phase: Option<String>,
+    #[serde(default)]
+    pub progress: Option<Progress>,
+    #[serde(default)]
+    pub stats_json: Option<serde_json::Value>,
 }

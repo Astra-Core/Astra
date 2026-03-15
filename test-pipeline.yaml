@@ -1,7 +1,38 @@
-version: "1"
+version: v1alpha1
 pipeline:
   name: test-pipeline
+  mode: snapshot
+  schedule: manual
 source:
   kind: postgres
+  connection:
+    host: localhost
+    port: 5432
+    database: astra
+    username: astra
+    passwordRef: env:POSTGRES_PASSWORD
+  capture:
+    tables:
+      - public.orders
+    snapshot:
+      mode: full
+      chunkSize: 1000
 destination:
-  kind: s3
+  kind: postgres
+  connection:
+    host: localhost
+    port: 5432
+    database: astra
+    username: astra
+    passwordRef: env:POSTGRES_PASSWORD
+    schema: astra_quickstart
+    tablePrefix: raw_
+  staging:
+    kind: local
+    bucket: astra-staging
+    prefix: test-pipeline/
+  write:
+    mode: append
+runtime:
+  parallelism:
+    tables: 1

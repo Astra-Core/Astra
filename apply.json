@@ -1,0 +1,4 @@
+{
+  "yaml": "version: v1alpha1\npipeline:\n  name: test-pipeline\n  mode: snapshot\n  schedule: manual\nsource:\n  kind: postgres\n  connection:\n    host: localhost\n    port: 5432\n    database: astra\n    username: astra\n    passwordRef: env:POSTGRES_PASSWORD\n  capture:\n    tables:\n      - public.orders\n    snapshot:\n      mode: full\n      chunkSize: 1000\ndestination:\n  kind: postgres\n  connection:\n    host: localhost\n    port: 5432\n    database: astra\n    username: astra\n    passwordRef: env:POSTGRES_PASSWORD\n    schema: astra_quickstart\n    tablePrefix: raw_\n  staging:\n    kind: local\n    bucket: astra-staging\n    prefix: test-pipeline/\n  write:\n    mode: append\nruntime:\n  parallelism:\n    tables: 1\n",
+  "created_by": "quickstart"
+}
