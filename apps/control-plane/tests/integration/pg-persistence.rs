@@ -1,4 +1,4 @@
-use crate::repositories::{
+use astra_control_plane::repositories::{
     postgres::PostgresPipelineRepository,
     pipeline_repository::{
         AppliedPipelineRecord, CreatePipelineRunRecord, PipelineRecord, PipelineRepository,
