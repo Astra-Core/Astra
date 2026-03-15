@@ -369,7 +369,9 @@ impl PipelineRepository for PostgresPipelineRepository {
                 &[&pipeline_name],
             )
             .await
-            .with_context(|| format!("failed to get latest run for pipeline '{}'", pipeline_name))?;
+            .with_context(|| {
+                format!("failed to get latest run for pipeline '{}'", pipeline_name)
+            })?;
 
         Ok(row.map(map_pipeline_run_row))
     }
@@ -396,7 +398,9 @@ impl PipelineRepository for PostgresPipelineRepository {
                 &[&pipeline_name, &(limit as i64)],
             )
             .await
-            .with_context(|| format!("failed to get run history for pipeline '{}'", pipeline_name))?;
+            .with_context(|| {
+                format!("failed to get run history for pipeline '{}'", pipeline_name)
+            })?;
 
         Ok(rows.into_iter().map(map_pipeline_run_row).collect())
     }
