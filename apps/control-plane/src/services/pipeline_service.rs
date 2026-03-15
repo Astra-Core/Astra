@@ -127,7 +127,10 @@ impl PipelineService {
         pipeline_name: &str,
         limit: usize,
     ) -> anyhow::Result<Vec<PipelineRunResponse>> {
-        let runs = self.repository.get_run_history(pipeline_name, limit).await?;
+        let runs = self
+            .repository
+            .get_run_history(pipeline_name, limit)
+            .await?;
         Ok(runs
             .into_iter()
             .map(|run| PipelineRunResponse {
