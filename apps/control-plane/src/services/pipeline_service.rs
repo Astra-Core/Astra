@@ -104,6 +104,46 @@ impl PipelineService {
             .collect())
     }
 
+    pub async fn get_latest_run(
+        &self,
+        pipeline_name: &str,
+    ) -> anyhow::Result<Option<PipelineRunResponse>> {
+        let run = self.repository.get_latest_run(pipeline_name).await?;
+        Ok(run.map(|run| PipelineRunResponse {
+            id: run.id,
+            pipeline_name: run.pipeline_name,
+            trigger_mode: run.trigger_mode,
+            status: run.status,
+            worker_id: run.worker_id,
+            started_at: run.started_at,
+            finished_at: run.finished_at,
+            created_at: run.created_at,
+            updated_at: run.updated_at,
+        }))
+    }
+
+    pub async fn get_run_history(
+        &self,
+        pipeline_name: &str,
+        limit: usize,
+    ) -> anyhow::Result<Vec<PipelineRunResponse>> {
+        let runs = self.repository.get_run_history(pipeline_name, limit).await?;
+        Ok(runs
+            .into_iter()
+            .map(|run| PipelineRunResponse {
+                id: run.id,
+                pipeline_name: run.pipeline_name,
+                trigger_mode: run.trigger_mode,
+                status: run.status,
+                worker_id: run.worker_id,
+                started_at: run.started_at,
+                finished_at: run.finished_at,
+                created_at: run.created_at,
+                updated_at: run.updated_at,
+            })
+            .collect())
+    }
+
     pub async fn record_staged_artifact(
         &self,
         pipeline_run_id: Uuid,

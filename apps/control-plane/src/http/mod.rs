@@ -19,6 +19,14 @@ pub fn routes() -> Router<AppState> {
             get(pipelines::list_pipeline_runs),
         )
         .route(
+            "/api/v1/pipelines/:pipeline_name/latest-run",
+            get(pipelines::get_latest_run),
+        )
+        .route(
+            "/api/v1/pipelines/:pipeline_name/run-history",
+            get(pipelines::get_run_history),
+        )
+        .route(
             "/api/v1/pipeline-runs",
             post(pipelines::create_pipeline_run),
         )

@@ -136,6 +136,42 @@ impl PipelineRepository for InMemoryPipelineRepository {
         Ok(runs)
     }
 
+    async fn get_latest_run(
+        &self,
+        pipeline_name: &str,
+    ) -> anyhow::Result<Option<PipelineRunRecord>> {
+        let runs = self.runs.read().await;
+        let mut matching: Vec<_> = runs
+            .values()
+            .filter(|run| run.pipeline_name == pipeline_name)
+            .cloned()
+            .collect();
+        matching.sort_by(|a, b| b.started_at.cmp(&a.started_at));
+        Ok(matching.into_iter().next())
+    }
+
+    async fn get_run_history(
+        &self,
+        pipeline_name: &str,
+        limit: usize,
+    ) -> anyhow::Result<Vec<PipelineRunRecord>> {
+        let mut runs: Vec<_> = self
+            .runs
+            .read()
+            .await
+            .values()
+            .filter(|run| run.pipeline_name == pipeline_name)
+            .cloned()
+            .collect();
+        runs.sort_by(|a, b| {
+            b.started_at
+                .cmp(&a.started_at)
+                .then_with(|| b.created_at.cmp(&a.created_at))
+        });
+        runs.truncate(limit);
+        Ok(runs)
+    }
+
     async fn record_staged_artifact(
         &self,
         artifact: RecordStagedArtifactRecord,

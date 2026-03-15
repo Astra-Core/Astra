@@ -348,6 +348,59 @@ impl PipelineRepository for PostgresPipelineRepository {
         Ok(rows.into_iter().map(map_pipeline_run_row).collect())
     }
 
+    async fn get_latest_run(
+        &self,
+        pipeline_name: &str,
+    ) -> anyhow::Result<Option<PipelineRunRecord>> {
+        let row = self
+            .client
+            .lock()
+            .await
+            .query_opt(
+                r#"
+                SELECT pr.id, p.name AS pipeline_name, pr.trigger_mode, pr.status, pr.worker_id,
+                       pr.started_at, pr.finished_at, pr.created_at, pr.updated_at
+                FROM pipeline_runs pr
+                INNER JOIN pipelines p ON p.id = pr.pipeline_id
+                WHERE p.name = $1
+                ORDER BY pr.started_at DESC, pr.created_at DESC
+                LIMIT 1
+                "#,
+                &[&pipeline_name],
+            )
+            .await
+            .with_context(|| format!("failed to get latest run for pipeline '{}'", pipeline_name))?;
+
+        Ok(row.map(map_pipeline_run_row))
+    }
+
+    async fn get_run_history(
+        &self,
+        pipeline_name: &str,
+        limit: usize,
+    ) -> anyhow::Result<Vec<PipelineRunRecord>> {
+        let rows = self
+            .client
+            .lock()
+            .await
+            .query(
+                r#"
+                SELECT pr.id, p.name AS pipeline_name, pr.trigger_mode, pr.status, pr.worker_id,
+                       pr.started_at, pr.finished_at, pr.created_at, pr.updated_at
+                FROM pipeline_runs pr
+                INNER JOIN pipelines p ON p.id = pr.pipeline_id
+                WHERE p.name = $1
+                ORDER BY pr.started_at DESC, pr.created_at DESC
+                LIMIT $2
+                "#,
+                &[&pipeline_name, &(limit as i64)],
+            )
+            .await
+            .with_context(|| format!("failed to get run history for pipeline '{}'", pipeline_name))?;
+
+        Ok(rows.into_iter().map(map_pipeline_run_row).collect())
+    }
+
     async fn record_staged_artifact(
         &self,
         artifact: RecordStagedArtifactRecord,
