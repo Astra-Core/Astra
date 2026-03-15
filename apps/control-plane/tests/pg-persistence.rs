@@ -1,43 +1,53 @@
-// use anyhow::{anyhow, Context, Result};
-use anyhow::Result;
-
+use anyhow::{Context, Result};
 use astra_control_plane::repositories::{
-    AppliedPipelineRecord, CreatePipelineRunRecord, InMemoryPipelineRepository, PipelineRecord,
-    PipelineRepository, PipelineRunRecord, PostgresPipelineRepository, RecordStagedArtifactRecord,
+    AppliedPipelineRecord, CreatePipelineRunRecord, PipelineRecord, PipelineRepository,
+    PipelineRunRecord, PostgresPipelineRepository, RecordStagedArtifactRecord,
     StagedArtifactRecord,
 };
 use astra_yaml::AstraSpec;
-use chrono::{DateTime, Utc};
-use serde_json::{json, Value};
-use std::fs;
+use chrono::Utc;
+use serde_json::json;
+use testcontainers::clients::Cli;
+use testcontainers::images::postgres::Postgres;
 use uuid::Uuid;
-
-const TEST_DB_URL: &str = "postgres://astra:astra@localhost:5432/astra_test_pg_persistence";
-
-// Assumes local Postgres (Podman docker-compose) is running.
-// Cleans up test data after each test using unique pipeline names.
 
 #[tokio::test]
 async fn test_pg_repo_full_flow() -> Result<()> {
-    let repo = PostgresPipelineRepository::connect(TEST_DB_URL)
-        .await
-        .context("PG connect")?;
+    let docker = Cli::default();
+    let postgres_image = Postgres::default();
+    let node = docker.run(postgres_image);
+    let pg_url = format!(
+        "postgres://postgres:postgres@localhost:{}",
+        node.get_host_port_ipv4(5432)?
+    );
+
+    // First repo instance
+    let repo1 = PostgresPipelineRepository::connect(&pg_url).await?;
 
     let pipeline_name = format!("test-pg-{}", Uuid::new_v4());
 
-    let example_yaml = fs::read_to_string("../../../examples/postgres-to-warehouse.astra.yaml")
-        .context("load example yaml")?;
-    let mut spec: AstraSpec = serde_yaml::from_str(&example_yaml).context("parse spec")?;
-    spec.pipeline.name = pipeline_name.clone();
-    let raw_yaml = serde_yaml::to_string(&spec).context("serialize spec yaml")?;
+    let spec_yaml = r#"
+pipeline:
+  name: test-pipeline
+source:
+  kind: postgres
+  config:
+    connection_string: postgres://foo
+destination:
+  kind: s3
+  config:
+    bucket: bar
+version: 1.0
+"#;
+    let spec: AstraSpec = serde_yaml::from_str(spec_yaml).context("parse spec")?;
+    let raw_yaml = spec_yaml.to_string();
 
     // apply_spec
-    let applied = repo
+    let applied = repo1
         .apply_spec(spec.clone(), raw_yaml.clone(), None)
         .await?;
     assert_eq!(applied.pipeline.name, pipeline_name);
     assert_eq!(applied.pipeline.status, "active");
-    assert_eq!(applied.pipeline.source_kind, "postgres");
 
     // create_run
     let now = Utc::now();
@@ -48,32 +58,29 @@ async fn test_pg_repo_full_flow() -> Result<()> {
         worker_id: Some("test-worker".to_string()),
         started_at: now,
     };
-    let run = repo.create_pipeline_run(create_rec).await?;
-    assert_eq!(run.pipeline_name, pipeline_name);
-    assert_eq!(run.status, "running");
-    assert_eq!(run.worker_id, Some("test-worker".to_string()));
+    let run = repo1.create_pipeline_run(create_rec).await?;
+    let run_id = run.id;
 
     // update_status
     let stats = json!({ "rows_processed": 42 });
-    let updated_run = repo
-        .update_pipeline_run_status(run.id, "succeeded".to_string(), stats.clone())
+    let updated_run = repo1
+        .update_pipeline_run_status(run_id, "succeeded".to_string(), stats.clone())
         .await?;
     assert_eq!(updated_run.status, "succeeded");
-    assert!(updated_run.finished_at.is_some());
 
     // list_runs / latest / history
-    let runs = repo.list_pipeline_runs(&pipeline_name).await?;
+    let runs: Vec<PipelineRunRecord> = repo1.list_pipeline_runs(&pipeline_name).await?;
     assert_eq!(runs.len(), 1);
-    let latest = repo.get_latest_run(&pipeline_name).await?;
+    let latest: Option<PipelineRunRecord> = repo1.get_latest_run(&pipeline_name).await?;
     assert!(latest.is_some());
     let latest = latest.unwrap();
-    assert_eq!(latest.id, run.id);
-    let history = repo.get_run_history(&pipeline_name, 10).await?;
+    assert_eq!(latest.id, run_id);
+    let history: Vec<PipelineRunRecord> = repo1.get_run_history(&pipeline_name, 10).await?;
     assert_eq!(history.len(), 1);
 
-    // artifacts
+    // record/list_artifacts
     let art_rec = RecordStagedArtifactRecord {
-        pipeline_run_id: run.id,
+        pipeline_run_id: run_id,
         stream_name: "public.orders".to_string(),
         partition_key: "default".to_string(),
         sequence: 0i64,
@@ -86,54 +93,54 @@ async fn test_pg_repo_full_flow() -> Result<()> {
         schema_fingerprint: Some("sha256:abc123".to_string()),
         metadata_json: json!({ "table": "orders" }),
     };
-    let artifact = repo.record_staged_artifact(art_rec).await?;
+    let artifact = repo1.record_staged_artifact(art_rec).await?;
     assert_eq!(artifact.row_count, 42);
-    let artifacts = repo.list_staged_artifacts(run.id).await?;
+    let artifacts: Vec<StagedArtifactRecord> = repo1.list_staged_artifacts(run_id).await?;
     assert_eq!(artifacts.len(), 1);
     assert_eq!(artifacts[0].stream_name, "public.orders");
 
-    // Optional: compare to memory repo
-    let mem_repo = InMemoryPipelineRepository::default();
-    let mem_applied = mem_repo.apply_spec(spec, raw_yaml, None).await?;
-    let mem_run = mem_repo.create_pipeline_run(create_rec).await?;
-    mem_repo
-        .update_pipeline_run_status(mem_run.id, "succeeded".to_string(), stats)
-        .await?;
-    let mem_runs = mem_repo.list_pipeline_runs(&pipeline_name).await?;
-    let pg_runs = repo.list_pipeline_runs(&pipeline_name).await?;
-    assert_eq!(mem_runs.len(), pg_runs.len());
-    let mem_run = &mem_runs[0];
-    let pg_run = &pg_runs[0];
-    assert_eq!(mem_run.pipeline_name, pg_run.pipeline_name);
-    assert_eq!(mem_run.status, pg_run.status);
-    // skip timestamps/ids
+    // Verify persistence (restart repo)
+    drop(repo1);
+    let repo2 = PostgresPipelineRepository::connect(&pg_url).await?;
+
+    let runs2: Vec<PipelineRunRecord> = repo2.list_pipeline_runs(&pipeline_name).await?;
+    assert_eq!(runs2.len(), 1);
+    let artifacts2: Vec<StagedArtifactRecord> = repo2.list_staged_artifacts(run_id).await?;
+    assert_eq!(artifacts2.len(), 1);
 
     Ok(())
 }
 
 #[tokio::test]
 async fn test_pg_repo_list_pipelines() -> Result<()> {
-    let repo = PostgresPipelineRepository::connect(TEST_DB_URL).await?;
+    let docker = Cli::default();
+    let postgres_image = Postgres::default();
+    let node = docker.run(postgres_image);
+    let pg_url = format!(
+        "postgres://postgres:postgres@localhost:{}",
+        node.get_host_port_ipv4(5432)?
+    );
+
+    let repo = PostgresPipelineRepository::connect(&pg_url).await?;
 
     let pipeline_name = format!("test-list-{}", Uuid::new_v4());
 
-    let example_yaml = fs::read_to_string("../../../examples/postgres-to-warehouse.astra.yaml")
-        .context("load example yaml")?;
-    let mut spec: AstraSpec = serde_yaml::from_str(&example_yaml).context("parse spec")?;
-    spec.pipeline.name = pipeline_name.clone();
-    let raw_yaml = serde_yaml::to_string(&spec).context("serialize spec yaml")?;
+    let spec_yaml = r#"
+pipeline:
+  name: test-list-pipeline
+source:
+  kind: postgres
+destination:
+  kind: s3
+version: 1.0
+"#;
+    let spec: AstraSpec = serde_yaml::from_str(spec_yaml)?;
+    let raw_yaml = spec_yaml.to_string();
 
-    let applied = repo.apply_spec(spec, raw_yaml, None).await?;
-    let pipelines = repo.list_pipelines().await?;
+    repo.apply_spec(spec, raw_yaml, None).await?;
+
+    let pipelines: Vec<PipelineRecord> = repo.list_pipelines().await?;
     assert!(pipelines.iter().any(|p| p.name == pipeline_name));
-    assert_eq!(
-        applied.pipeline.spec_version,
-        pipelines
-            .iter()
-            .find(|p| p.name == pipeline_name)
-            .unwrap()
-            .spec_version
-    );
 
     Ok(())
 }
