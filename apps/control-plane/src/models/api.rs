@@ -1,5 +1,6 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use uuid::Uuid;
 
 #[derive(Debug, Serialize)]
@@ -54,6 +55,7 @@ pub struct PipelineRunResponse {
     pub finished_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    pub stats_json: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Serialize)]
@@ -99,4 +101,10 @@ pub struct StagedArtifactResponse {
 #[derive(Debug, Serialize)]
 pub struct StagedArtifactsResponse {
     pub artifacts: Vec<StagedArtifactResponse>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdatePipelineRunStatusRequest {
+    pub status: String,
+    pub stats_json: serde_json::Value,
 }

@@ -39,6 +39,31 @@ struct StoredPipeline {
 
 #[async_trait]
 impl PipelineRepository for InMemoryPipelineRepository {
+    async fn get_pipeline_yaml(&self, pipeline_name: &str) -> anyhow::Result<Option<String>> {
+        let guard = self.inner.read().await;
+        Ok(guard.get(pipeline_name).map(|x| x.raw_yaml.clone()))
+    }
+
+    async fn update_pipeline_run_status(
+        &self,
+        run_id: Uuid,
+        status: String,
+        stats_json: serde_json::Value,
+    ) -> anyhow::Result<PipelineRunRecord> {
+        let mut runs = self.runs.write().await;
+        if let Some(run) = runs.get_mut(&run_id) {
+            if status == "succeeded" || status == "failed" || status == "error" {
+                run.finished_at = Some(Utc::now());
+            }
+            run.status = status;
+            run.stats_json = Some(stats_json);
+            run.updated_at = Utc::now();
+            Ok(run.clone())
+        } else {
+            Err(anyhow!("pipeline run {} not found", run_id))
+        }
+    }
+
     async fn list_pipelines(&self) -> anyhow::Result<Vec<PipelineRecord>> {
         let guard = self.inner.read().await;
         let mut items: Vec<_> = guard.values().map(|x| x.record.clone()).collect();
@@ -110,6 +135,7 @@ impl PipelineRepository for InMemoryPipelineRepository {
             finished_at: None,
             created_at: now,
             updated_at: now,
+            stats_json: None,
         };
 
         self.runs.write().await.insert(record.id, record.clone());
