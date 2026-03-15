@@ -91,6 +91,15 @@ pub trait PipelineRepository: Send + Sync {
         &self,
         pipeline_name: &str,
     ) -> anyhow::Result<Vec<PipelineRunRecord>>;
+    async fn get_latest_run(
+        &self,
+        pipeline_name: &str,
+    ) -> anyhow::Result<Option<PipelineRunRecord>>;
+    async fn get_run_history(
+        &self,
+        pipeline_name: &str,
+        limit: usize,
+    ) -> anyhow::Result<Vec<PipelineRunRecord>>;
     async fn record_staged_artifact(
         &self,
         artifact: RecordStagedArtifactRecord,

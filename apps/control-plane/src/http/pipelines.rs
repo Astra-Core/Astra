@@ -72,6 +72,29 @@ pub async fn list_pipeline_runs(
     Ok(Json(PipelineRunsResponse { runs }))
 }
 
+pub async fn get_latest_run(
+    State(state): State<AppState>,
+    Path(pipeline_name): Path<String>,
+) -> Result<Json<Option<crate::models::api::PipelineRunResponse>>, AppError> {
+    let run = state
+        .pipeline_service
+        .get_latest_run(&pipeline_name)
+        .await?;
+    Ok(Json(run))
+}
+
+pub async fn get_run_history(
+    State(state): State<AppState>,
+    Path(pipeline_name): Path<String>,
+) -> Result<Json<PipelineRunsResponse>, AppError> {
+    // Default limit of 10 runs if not specified
+    let runs = state
+        .pipeline_service
+        .get_run_history(&pipeline_name, 10)
+        .await?;
+    Ok(Json(PipelineRunsResponse { runs }))
+}
+
 pub async fn record_staged_artifact(
     State(state): State<AppState>,
     Path(pipeline_run_id): Path<Uuid>,
