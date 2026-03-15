@@ -2,7 +2,7 @@ use anyhow::{anyhow, Context};
 use clap::Parser;
 use reqwest::Client;
 use serde_json::{json, Value};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::time::sleep;
 use tracing::{error, info};
 use uuid::Uuid;
@@ -61,30 +61,70 @@ async fn main() -> anyhow::Result<()> {
 
     println!("Running...");
 
-    // Simulate work
-    sleep(Duration::from_secs(10)).await;
+    let start_time = Instant::now();
+    let stages = vec![
+        ("Planning", Duration::from_secs(1)),
+        ("Snapshot", Duration::from_secs(3)),
+        ("StageFlush", Duration::from_secs(2)),
+        ("SinkApply", Duration::from_secs(3)),
+        ("Finalize", Duration::from_secs(1)),
+    ];
 
-    // Update status
-    let update_req = json!({
-        "status": "succeeded",
-        "stats_json": {"tables": 2, "rows": 1500}
+    for (idx, (phase, duration)) in stages.iter().enumerate() {
+        info!("Starting stage: {}", phase);
+        sleep(*duration).await;
+
+        let progress = json!({"current": (idx + 1) as u32, "total": 5u32});
+        let status_req = json!({
+            "status": "running",
+            "phase": phase,
+            "progress": progress
+        });
+        let update_res = client
+            .post(format!(
+                "{}/api/v1/pipeline-runs/{}/status",
+                base_url, run_id
+            ))
+            .json(&status_req)
+            .send()
+            .await
+            .context(format!("failed to update status for stage {}", phase))?;
+        if !update_res.status().is_success() {
+            return Err(anyhow!(
+                "stage {} update failed: {}",
+                phase,
+                update_res.text().await?
+            ));
+        }
+        info!("Completed stage {} ({} / 5)", phase, idx + 1);
+    }
+
+    let duration_ms = start_time.elapsed().as_millis() as u64;
+    let final_stats = json!({
+        "duration_ms": duration_ms,
+        "tables": 2,
+        "errors": []
     });
-    let update_res = client
+    let final_req = json!({
+        "status": "succeeded",
+        "stats_json": final_stats
+    });
+    let final_res = client
         .post(format!(
             "{}/api/v1/pipeline-runs/{}/status",
             base_url, run_id
         ))
-        .json(&update_req)
+        .json(&final_req)
         .send()
         .await
-        .context("failed to update run status")?;
-    if !update_res.status().is_success() {
+        .context("failed to send final status")?;
+    if !final_res.status().is_success() {
         return Err(anyhow!(
-            "status update failed: {}",
-            update_res.text().await?
+            "final status update failed: {}",
+            final_res.text().await?
         ));
     }
-    info!("Updated run {} to succeeded", run_id);
+    info!("Updated run {} to succeeded with stats", run_id);
 
     println!("Pipeline execution complete.");
 

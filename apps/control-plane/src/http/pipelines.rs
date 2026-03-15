@@ -150,7 +150,13 @@ pub async fn update_pipeline_run_status(
 ) -> Result<Json<crate::models::api::PipelineRunResponse>, AppError> {
     let updated_run = state
         .pipeline_service
-        .update_pipeline_run_status(run_id, request.status, request.stats_json)
+        .update_pipeline_run_status(
+            run_id,
+            request.status.clone(),
+            request.phase.clone(),
+            request.progress.clone(),
+            request.stats_json.clone(),
+        )
         .await?;
     Ok(Json(updated_run))
 }

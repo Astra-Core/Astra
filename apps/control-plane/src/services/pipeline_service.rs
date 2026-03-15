@@ -1,6 +1,7 @@
 use crate::{
     models::api::{
-        ApplySpecResponse, PipelineRunResponse, PipelineSummaryResponse, StagedArtifactResponse,
+        ApplySpecResponse, PipelineRunResponse, PipelineSummaryResponse, Progress,
+        StagedArtifactResponse,
     },
     repositories::{CreatePipelineRunRecord, PipelineRepository, RecordStagedArtifactRecord},
 };
@@ -238,11 +239,21 @@ impl PipelineService {
         &self,
         run_id: Uuid,
         status: String,
-        stats_json: serde_json::Value,
+        phase: Option<String>,
+        progress: Option<Progress>,
+        stats_json: Option<serde_json::Value>,
     ) -> anyhow::Result<PipelineRunResponse> {
+        let mut merged_stats = stats_json.unwrap_or_else(|| serde_json::json!({}));
+        if let Some(p) = phase {
+            merged_stats["phase"] = serde_json::Value::String(p);
+        }
+        if let Some(prog) = progress {
+            merged_stats["progress"] =
+                serde_json::json!({"current": prog.current, "total": prog.total});
+        }
         let run = self
             .repository
-            .update_pipeline_run_status(run_id, status, stats_json)
+            .update_pipeline_run_status(run_id, status, merged_stats)
             .await?;
         Ok(PipelineRunResponse {
             id: run.id,
