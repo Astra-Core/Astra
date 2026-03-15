@@ -5,7 +5,7 @@ mod error;
 mod http;
 mod metadata;
 mod models;
-mod repositories;
+pub mod repositories;
 mod scheduler;
 mod services;
 mod state;

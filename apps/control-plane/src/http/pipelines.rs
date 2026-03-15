@@ -10,7 +10,6 @@ use axum::{
     extract::{Path, State},
     Json,
 };
-use serde_json::Value;
 use uuid::Uuid;
 
 pub async fn list_pipelines(
