@@ -118,3 +118,4 @@ pub struct UpdatePipelineRunStatusRequest {
     #[serde(default)]
     pub stats_json: Option<serde_json::Value>,
 }
+pub enum RunStatus { Pending, Running, Succeeded, Failed, Cancelled }
