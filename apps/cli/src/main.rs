@@ -496,3 +496,8 @@ async fn load_local_staging_to_postgres(
 
 fn default_staging_root_from_env() -> Option<PathBuf> {
     std::env::var_os("ASTRA_STAGING_LOCAL_ROOT").map(PathBuf::from)
+}
+
+fn default_checkpoint_root_from_env() -> Option<PathBuf> {
+    std::env::var_os("ASTRA_CHECKPOINT_LOCAL_ROOT").map(PathBuf::from)
+}
