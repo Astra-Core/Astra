@@ -1,0 +1,40 @@
+[package]
+name = "astra-control-plane"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+anyhow.workspace = true
+axum.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+uuid.workspace = true
+thiserror.workspace = true
+async-trait = "0.1"
+sha2 = "0.10"
+tokio-postgres = { version = "0.7", features = ["with-uuid-1", "with-chrono-0_4", "with-serde_json-1"] }
+tower-http = { version = "0.5", features = ["fs", "trace"] }
+astra-api = { path = "../../crates/astra-api" }
+astra-core = { path = "../../crates/astra-core" }
+astra-metadata = { path = "../../crates/astra-metadata" }
+astra-observability = { path = "../../crates/astra-observability" }
+astra-secrets = { path = "../../crates/astra-secrets" }
+astra-yaml = { path = "../../crates/astra-yaml", default-features = false }
+
+[dev-dependencies]
+astra-yaml = { path = "../../crates/astra-yaml" }
+tokio = { workspace = true, features = ["full"] }
+
+testcontainers = "0.15"
+tokio-postgres = "0.7"
+uuid.workspace = true
+serde_json.workspace = true

@@ -75,6 +75,30 @@ pub struct StagedArtifactRecord {
     pub created_at: DateTime<Utc>,
 }
 
+#[derive(Debug, Clone)]
+pub struct TableExecutionRecord {
+    pub id: Uuid,
+    pub pipeline_run_id: Uuid,
+    pub stream_name: String,
+    pub status: String,
+    pub rows_processed: i64,
+    pub rows_total: Option<i64>,
+    pub error_summary: Option<String>,
+    pub started_at: DateTime<Utc>,
+    pub finished_at: Option<DateTime<Utc>>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone)]
+pub struct UpsertTableExecutionRecord {
+    pub pipeline_run_id: Uuid,
+    pub stream_name: String,
+    pub status: String,
+    pub rows_processed: i64,
+    pub rows_total: Option<i64>,
+    pub error_summary: Option<String>,
+}
+
 #[async_trait]
 pub trait PipelineRepository: Send + Sync {
     async fn get_pipeline_yaml(&self, pipeline_name: &str) -> anyhow::Result<Option<String>>;
@@ -116,4 +140,12 @@ pub trait PipelineRepository: Send + Sync {
         &self,
         pipeline_run_id: Uuid,
     ) -> anyhow::Result<Vec<StagedArtifactRecord>>;
+    async fn list_table_executions(
+        &self,
+        pipeline_run_id: Uuid,
+    ) -> anyhow::Result<Vec<TableExecutionRecord>>;
+    async fn upsert_table_execution(
+        &self,
+        record: UpsertTableExecutionRecord,
+    ) -> anyhow::Result<TableExecutionRecord>;
 }
