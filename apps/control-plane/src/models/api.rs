@@ -127,6 +127,10 @@ pub struct TableExecutionResponse {
     pub rows_processed: i64,
     pub rows_total: Option<i64>,
     pub error_summary: Option<String>,
+    pub checkpoint_next_sequence: Option<i64>,
+    pub checkpoint_rows_staged: Option<i64>,
+    pub checkpoint_last_chunk_key: Option<String>,
+    pub checkpoint_completed: bool,
     pub started_at: DateTime<Utc>,
     pub finished_at: Option<DateTime<Utc>>,
     pub updated_at: DateTime<Utc>,
@@ -144,6 +148,14 @@ pub struct UpsertTableExecutionRequest {
     pub rows_processed: i64,
     pub rows_total: Option<i64>,
     pub error_summary: Option<String>,
+    #[serde(default)]
+    pub checkpoint_next_sequence: Option<i64>,
+    #[serde(default)]
+    pub checkpoint_rows_staged: Option<i64>,
+    #[serde(default)]
+    pub checkpoint_last_chunk_key: Option<String>,
+    #[serde(default)]
+    pub checkpoint_completed: Option<bool>,
 }
 
 pub enum RunStatus {

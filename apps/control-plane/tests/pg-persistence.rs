@@ -115,10 +115,23 @@ version: 1.0
         rows_processed: 0i64,
         rows_total: Some(100i64),
         error_summary: None,
+        checkpoint_next_sequence: Some(1),
+        checkpoint_rows_staged: Some(42),
+        checkpoint_last_chunk_key: Some(
+            "pipelines/test/streams/test_stream/chunks/00000000000000000000.jsonl.gz".to_string(),
+        ),
+        checkpoint_completed: Some(false),
     };
     let table_exec = repo2.upsert_table_execution(upsert_rec).await?;
     assert_eq!(table_exec.status, "running");
     assert_eq!(table_exec.rows_processed, 0i64);
+    assert_eq!(table_exec.checkpoint_next_sequence, Some(1));
+    assert_eq!(table_exec.checkpoint_rows_staged, Some(42));
+    assert_eq!(
+        table_exec.checkpoint_last_chunk_key.as_deref(),
+        Some("pipelines/test/streams/test_stream/chunks/00000000000000000000.jsonl.gz")
+    );
+    assert!(!table_exec.checkpoint_completed);
 
     let execs = repo2.list_table_executions(run_id).await?;
     assert_eq!(execs.len(), 1);
@@ -126,25 +139,42 @@ version: 1.0
     let upsert_rec_terminal = UpsertTableExecutionRecord {
         pipeline_run_id: run_id,
         stream_name: "test_stream".to_string(),
-        status: "failed".to_string(),
+        status: "snapshot_complete".to_string(),
         rows_processed: 50i64,
         rows_total: Some(100i64),
-        error_summary: Some("test error message".to_string()),
+        error_summary: None,
+        checkpoint_next_sequence: Some(2),
+        checkpoint_rows_staged: Some(100),
+        checkpoint_last_chunk_key: Some(
+            "pipelines/test/streams/test_stream/chunks/00000000000000000001.jsonl.gz".to_string(),
+        ),
+        checkpoint_completed: Some(true),
     };
     let table_exec_terminal = repo2.upsert_table_execution(upsert_rec_terminal).await?;
-    assert_eq!(table_exec_terminal.status, "failed");
+    assert_eq!(table_exec_terminal.status, "snapshot_complete");
     assert!(table_exec_terminal.finished_at.is_some());
+    assert_eq!(table_exec_terminal.error_summary, None);
+    assert_eq!(table_exec_terminal.checkpoint_next_sequence, Some(2));
+    assert_eq!(table_exec_terminal.checkpoint_rows_staged, Some(100));
     assert_eq!(
-        table_exec_terminal.error_summary,
-        Some("test error message".to_string())
+        table_exec_terminal.checkpoint_last_chunk_key.as_deref(),
+        Some("pipelines/test/streams/test_stream/chunks/00000000000000000001.jsonl.gz")
     );
+    assert!(table_exec_terminal.checkpoint_completed);
 
     // Verify table exec persistence
     drop(repo2);
     let repo3 = PostgresPipelineRepository::connect(&pg_url).await?;
     let execs3 = repo3.list_table_executions(run_id).await?;
     assert_eq!(execs3.len(), 1);
-    assert_eq!(execs3[0].status, "failed");
+    assert_eq!(execs3[0].status, "snapshot_complete");
+    assert_eq!(execs3[0].checkpoint_next_sequence, Some(2));
+    assert_eq!(execs3[0].checkpoint_rows_staged, Some(100));
+    assert_eq!(
+        execs3[0].checkpoint_last_chunk_key.as_deref(),
+        Some("pipelines/test/streams/test_stream/chunks/00000000000000000001.jsonl.gz")
+    );
+    assert!(execs3[0].checkpoint_completed);
 
     // Test cancelled run status
     let now = Utc::now();

@@ -171,3 +171,32 @@ pub async fn list_staged_artifacts(
         .await?;
     Ok(Json(StagedArtifactsResponse { artifacts }))
 }
+
+pub async fn list_table_executions(
+    State(state): State<AppState>,
+    Path(pipeline_run_id): Path<Uuid>,
+) -> Result<Json<TableExecutionsResponse>, AppError> {
+    let tables = state
+        .pipeline_service
+        .list_table_executions(pipeline_run_id)
+        .await?;
+    Ok(Json(TableExecutionsResponse { tables }))
+}
+
+pub async fn upsert_table_execution(
+    State(state): State<AppState>,
+    Path(pipeline_run_id): Path<Uuid>,
+    Json(request): Json<UpsertTableExecutionRequest>,
+) -> Result<Json<TableExecutionResponse>, AppError> {
+    if request.stream_name.trim().is_empty() {
+        return Err(AppError::BadRequest(
+            "stream_name must not be empty".to_string(),
+        ));
+    }
+
+    let response = state
+        .pipeline_service
+        .upsert_table_execution(pipeline_run_id, request)
+        .await?;
+    Ok(Json(response))
+}

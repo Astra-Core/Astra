@@ -115,11 +115,21 @@ impl PostgresPipelineRepository {
                     rows_processed BIGINT NOT NULL DEFAULT 0,
                     rows_total BIGINT,
                     error_summary TEXT,
+                    checkpoint_next_sequence BIGINT,
+                    checkpoint_rows_staged BIGINT,
+                    checkpoint_last_chunk_key TEXT,
+                    checkpoint_completed BOOLEAN NOT NULL DEFAULT FALSE,
                     started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                     finished_at TIMESTAMPTZ,
                     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                     UNIQUE(pipeline_run_id, stream_name)
                 );
+
+                ALTER TABLE table_executions
+                    ADD COLUMN IF NOT EXISTS checkpoint_next_sequence BIGINT,
+                    ADD COLUMN IF NOT EXISTS checkpoint_rows_staged BIGINT,
+                    ADD COLUMN IF NOT EXISTS checkpoint_last_chunk_key TEXT,
+                    ADD COLUMN IF NOT EXISTS checkpoint_completed BOOLEAN NOT NULL DEFAULT FALSE;
 
                 CREATE INDEX IF NOT EXISTS idx_table_executions_run
                     ON table_executions (pipeline_run_id);
@@ -530,7 +540,9 @@ impl PipelineRepository for PostgresPipelineRepository {
             .query(
                 r#"
                 SELECT id, pipeline_run_id, stream_name, status, rows_processed, rows_total,
-                       error_summary, started_at, finished_at, updated_at
+                       error_summary, checkpoint_next_sequence, checkpoint_rows_staged,
+                       checkpoint_last_chunk_key, checkpoint_completed,
+                       started_at, finished_at, updated_at
                 FROM table_executions
                 WHERE pipeline_run_id = $1
                 ORDER BY stream_name ASC
@@ -556,10 +568,11 @@ impl PipelineRepository for PostgresPipelineRepository {
         let row = client.query_one(
             r#"
             INSERT INTO table_executions (
-                id, pipeline_run_id, stream_name, status, rows_processed, rows_total, error_summary
+                id, pipeline_run_id, stream_name, status, rows_processed, rows_total, error_summary,
+                checkpoint_next_sequence, checkpoint_rows_staged, checkpoint_last_chunk_key, checkpoint_completed
             )
             VALUES (
-                gen_random_uuid(), $1, $2, $3, $4, $5, $6
+                gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, $9, COALESCE($10, FALSE)
             )
             ON CONFLICT (pipeline_run_id, stream_name)
             DO UPDATE SET
@@ -567,10 +580,16 @@ impl PipelineRepository for PostgresPipelineRepository {
                 rows_processed = EXCLUDED.rows_processed,
                 rows_total = EXCLUDED.rows_total,
                 error_summary = EXCLUDED.error_summary,
-                finished_at = CASE WHEN EXCLUDED.status IN ('staged', 'applied', 'failed') THEN NOW() ELSE table_executions.finished_at END,
+                checkpoint_next_sequence = EXCLUDED.checkpoint_next_sequence,
+                checkpoint_rows_staged = EXCLUDED.checkpoint_rows_staged,
+                checkpoint_last_chunk_key = EXCLUDED.checkpoint_last_chunk_key,
+                checkpoint_completed = EXCLUDED.checkpoint_completed,
+                finished_at = CASE WHEN EXCLUDED.status IN ('staged', 'applied', 'failed', 'snapshot_complete') THEN NOW() ELSE table_executions.finished_at END,
                 updated_at = NOW()
             RETURNING id, pipeline_run_id, stream_name, status, rows_processed, rows_total,
-                      error_summary, started_at, finished_at, updated_at
+                      error_summary, checkpoint_next_sequence, checkpoint_rows_staged,
+                      checkpoint_last_chunk_key, checkpoint_completed,
+                      started_at, finished_at, updated_at
             "#,
             &[
                 &record.pipeline_run_id,
@@ -579,6 +598,10 @@ impl PipelineRepository for PostgresPipelineRepository {
                 &record.rows_processed,
                 &record.rows_total,
                 &record.error_summary,
+                &record.checkpoint_next_sequence,
+                &record.checkpoint_rows_staged,
+                &record.checkpoint_last_chunk_key,
+                &record.checkpoint_completed,
             ],
         )
         .await
@@ -597,6 +620,10 @@ fn map_table_execution_row(row: Row) -> TableExecutionRecord {
         rows_processed: row.get("rows_processed"),
         rows_total: row.get("rows_total"),
         error_summary: row.get("error_summary"),
+        checkpoint_next_sequence: row.get("checkpoint_next_sequence"),
+        checkpoint_rows_staged: row.get("checkpoint_rows_staged"),
+        checkpoint_last_chunk_key: row.get("checkpoint_last_chunk_key"),
+        checkpoint_completed: row.get("checkpoint_completed"),
         started_at: row.get("started_at"),
         finished_at: row.get("finished_at"),
         updated_at: row.get("updated_at"),
