@@ -162,7 +162,7 @@ impl PipelineRepository for PostgresPipelineRepository {
             UPDATE pipeline_runs pr
             SET status = $1,
                 stats_json = $2,
-                finished_at = CASE WHEN $1 IN ('succeeded','failed','error') THEN NOW() ELSE pr.finished_at END,
+                finished_at = CASE WHEN $1 IN ('succeeded','failed','error','cancelled') THEN NOW() ELSE pr.finished_at END,
                 updated_at = NOW()
             FROM pipelines p
             WHERE pr.id = $3 AND pr.pipeline_id = p.id

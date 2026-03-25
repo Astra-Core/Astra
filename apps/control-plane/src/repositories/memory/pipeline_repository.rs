@@ -54,7 +54,11 @@ impl PipelineRepository for InMemoryPipelineRepository {
     ) -> anyhow::Result<PipelineRunRecord> {
         let mut runs = self.runs.write().await;
         if let Some(run) = runs.get_mut(&run_id) {
-            if status == "succeeded" || status == "failed" || status == "error" {
+            if status == "succeeded"
+                || status == "failed"
+                || status == "error"
+                || status == "cancelled"
+            {
                 run.finished_at = Some(Utc::now());
             }
             run.status = status;
