@@ -42,6 +42,10 @@ pub fn routes() -> Router<AppState> {
             "/api/v1/pipeline-runs/:pipeline_run_id/artifacts",
             post(pipelines::record_staged_artifact).get(pipelines::list_staged_artifacts),
         )
+        .route(
+            "/api/v1/pipeline-runs/:pipeline_run_id/table-executions",
+            post(pipelines::upsert_table_execution).get(pipelines::list_table_executions),
+        )
         .route("/api/v1/specs/apply", post(pipelines::apply_spec))
         .route(
             "/api/v1/examples/postgres-to-warehouse",

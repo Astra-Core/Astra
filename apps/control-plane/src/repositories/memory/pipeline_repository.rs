@@ -303,6 +303,12 @@ impl PipelineRepository for InMemoryPipelineRepository {
             existing.rows_processed = record.rows_processed;
             existing.rows_total = record.rows_total;
             existing.error_summary = record.error_summary;
+            existing.checkpoint_next_sequence = record.checkpoint_next_sequence;
+            existing.checkpoint_rows_staged = record.checkpoint_rows_staged;
+            existing.checkpoint_last_chunk_key = record.checkpoint_last_chunk_key;
+            if let Some(completed) = record.checkpoint_completed {
+                existing.checkpoint_completed = completed;
+            }
             if finished {
                 existing.finished_at = Some(now);
             }
@@ -317,6 +323,10 @@ impl PipelineRepository for InMemoryPipelineRepository {
                 rows_processed: record.rows_processed,
                 rows_total: record.rows_total,
                 error_summary: record.error_summary,
+                checkpoint_next_sequence: record.checkpoint_next_sequence,
+                checkpoint_rows_staged: record.checkpoint_rows_staged,
+                checkpoint_last_chunk_key: record.checkpoint_last_chunk_key,
+                checkpoint_completed: record.checkpoint_completed.unwrap_or(false),
                 started_at: now,
                 finished_at: if finished { Some(now) } else { None },
                 updated_at: now,

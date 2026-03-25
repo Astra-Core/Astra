@@ -7,36 +7,65 @@ use astra_control_plane::repositories::{
 use astra_yaml::AstraSpec;
 use chrono::Utc;
 use serde_json::json;
-use testcontainers::runners::AsyncRunner;
-use testcontainers_modules::postgres::Postgres;
-use uuid::Uuid;
+use testcontainers::{core::RunnableImage, core::WaitFor, runners::AsyncRunner, GenericImage};
 
 #[tokio::test]
 async fn test_pg_repo_full_flow() -> Result<()> {
-    let postgres_image = Postgres::default();
-    let node = postgres_image.start().await?;
-    let pg_url = format!(
-        "postgres://postgres:postgres@localhost:{}",
-        node.get_host_port_ipv4(5432).await?
-    );
+    let postgres_image = RunnableImage::from(
+        GenericImage::new("postgres", "15")
+            .with_env_var("POSTGRES_PASSWORD", "postgres")
+            .with_env_var("POSTGRES_USER", "postgres")
+            .with_env_var("POSTGRES_DB", "postgres")
+            .with_wait_for(WaitFor::message_on_stderr(
+                "database system is ready to accept connections",
+            )),
+    )
+    .with_mapped_port((55432, 5432));
+    let _node = postgres_image.start().await?;
+    let pg_url = "postgres://postgres:postgres@localhost:55432".to_string();
 
     // First repo instance
     let repo1 = PostgresPipelineRepository::connect(&pg_url).await?;
 
-    let pipeline_name = format!("test-pg-{}", Uuid::new_v4());
+    let pipeline_name = "test-pipeline".to_string();
 
     let spec_yaml = r#"
+version: v1alpha1
 pipeline:
   name: test-pipeline
+  mode: snapshot
+  schedule: manual
 source:
   kind: postgres
-  config:
-    connection_string: postgres://foo
+  connection:
+    host: localhost
+    port: 5432
+    database: astra
+    username: astra
+    passwordRef: env:POSTGRES_PASSWORD
+  capture:
+    tables:
+      - public.orders
+    snapshot:
+      mode: full
 destination:
-  kind: s3
-  config:
-    bucket: bar
-version: 1.0
+  kind: postgres
+  connection:
+    host: localhost
+    port: 5432
+    database: astra
+    username: astra
+    passwordRef: env:POSTGRES_PASSWORD
+    schema: astra
+  staging:
+    kind: local
+    bucket: astra-staging
+    prefix: test-pipeline/
+  write:
+    mode: append
+runtime:
+  parallelism:
+    tables: 1
 "#;
     let spec: AstraSpec = serde_yaml::from_str(spec_yaml).context("parse spec")?;
     let raw_yaml = spec_yaml.to_string();
@@ -115,10 +144,23 @@ version: 1.0
         rows_processed: 0i64,
         rows_total: Some(100i64),
         error_summary: None,
+        checkpoint_next_sequence: Some(1),
+        checkpoint_rows_staged: Some(42),
+        checkpoint_last_chunk_key: Some(
+            "pipelines/test/streams/test_stream/chunks/00000000000000000000.jsonl.gz".to_string(),
+        ),
+        checkpoint_completed: Some(false),
     };
     let table_exec = repo2.upsert_table_execution(upsert_rec).await?;
     assert_eq!(table_exec.status, "running");
     assert_eq!(table_exec.rows_processed, 0i64);
+    assert_eq!(table_exec.checkpoint_next_sequence, Some(1));
+    assert_eq!(table_exec.checkpoint_rows_staged, Some(42));
+    assert_eq!(
+        table_exec.checkpoint_last_chunk_key.as_deref(),
+        Some("pipelines/test/streams/test_stream/chunks/00000000000000000000.jsonl.gz")
+    );
+    assert!(!table_exec.checkpoint_completed);
 
     let execs = repo2.list_table_executions(run_id).await?;
     assert_eq!(execs.len(), 1);
@@ -126,25 +168,42 @@ version: 1.0
     let upsert_rec_terminal = UpsertTableExecutionRecord {
         pipeline_run_id: run_id,
         stream_name: "test_stream".to_string(),
-        status: "failed".to_string(),
+        status: "snapshot_complete".to_string(),
         rows_processed: 50i64,
         rows_total: Some(100i64),
-        error_summary: Some("test error message".to_string()),
+        error_summary: None,
+        checkpoint_next_sequence: Some(2),
+        checkpoint_rows_staged: Some(100),
+        checkpoint_last_chunk_key: Some(
+            "pipelines/test/streams/test_stream/chunks/00000000000000000001.jsonl.gz".to_string(),
+        ),
+        checkpoint_completed: Some(true),
     };
     let table_exec_terminal = repo2.upsert_table_execution(upsert_rec_terminal).await?;
-    assert_eq!(table_exec_terminal.status, "failed");
+    assert_eq!(table_exec_terminal.status, "snapshot_complete");
     assert!(table_exec_terminal.finished_at.is_some());
+    assert_eq!(table_exec_terminal.error_summary, None);
+    assert_eq!(table_exec_terminal.checkpoint_next_sequence, Some(2));
+    assert_eq!(table_exec_terminal.checkpoint_rows_staged, Some(100));
     assert_eq!(
-        table_exec_terminal.error_summary,
-        Some("test error message".to_string())
+        table_exec_terminal.checkpoint_last_chunk_key.as_deref(),
+        Some("pipelines/test/streams/test_stream/chunks/00000000000000000001.jsonl.gz")
     );
+    assert!(table_exec_terminal.checkpoint_completed);
 
     // Verify table exec persistence
     drop(repo2);
     let repo3 = PostgresPipelineRepository::connect(&pg_url).await?;
     let execs3 = repo3.list_table_executions(run_id).await?;
     assert_eq!(execs3.len(), 1);
-    assert_eq!(execs3[0].status, "failed");
+    assert_eq!(execs3[0].status, "snapshot_complete");
+    assert_eq!(execs3[0].checkpoint_next_sequence, Some(2));
+    assert_eq!(execs3[0].checkpoint_rows_staged, Some(100));
+    assert_eq!(
+        execs3[0].checkpoint_last_chunk_key.as_deref(),
+        Some("pipelines/test/streams/test_stream/chunks/00000000000000000001.jsonl.gz")
+    );
+    assert!(execs3[0].checkpoint_completed);
 
     // Test cancelled run status
     let now = Utc::now();
@@ -168,25 +227,60 @@ version: 1.0
 
 #[tokio::test]
 async fn test_pg_repo_list_pipelines() -> Result<()> {
-    let postgres_image = Postgres::default();
-    let node = postgres_image.start().await?;
-    let pg_url = format!(
-        "postgres://postgres:postgres@localhost:{}",
-        node.get_host_port_ipv4(5432).await?
-    );
+    let postgres_image = RunnableImage::from(
+        GenericImage::new("postgres", "15")
+            .with_env_var("POSTGRES_PASSWORD", "postgres")
+            .with_env_var("POSTGRES_USER", "postgres")
+            .with_env_var("POSTGRES_DB", "postgres")
+            .with_wait_for(WaitFor::message_on_stderr(
+                "database system is ready to accept connections",
+            )),
+    )
+    .with_mapped_port((55433, 5432));
+    let _node = postgres_image.start().await?;
+    let pg_url = "postgres://postgres:postgres@localhost:55433".to_string();
 
     let repo = PostgresPipelineRepository::connect(&pg_url).await?;
 
-    let pipeline_name = format!("test-list-{}", Uuid::new_v4());
+    let pipeline_name = "test-list-pipeline".to_string();
 
     let spec_yaml = r#"
+version: v1alpha1
 pipeline:
   name: test-list-pipeline
+  mode: snapshot
+  schedule: manual
 source:
   kind: postgres
+  connection:
+    host: localhost
+    port: 5432
+    database: astra
+    username: astra
+    passwordRef: env:POSTGRES_PASSWORD
+  capture:
+    tables:
+      - public.orders
+    snapshot:
+      mode: full
 destination:
-  kind: s3
-version: 1.0
+  kind: postgres
+  connection:
+    host: localhost
+    port: 5432
+    database: astra
+    username: astra
+    passwordRef: env:POSTGRES_PASSWORD
+    schema: astra
+  staging:
+    kind: local
+    bucket: astra-staging
+    prefix: test-list-pipeline/
+  write:
+    mode: append
+runtime:
+  parallelism:
+    tables: 1
 "#;
     let spec: AstraSpec = serde_yaml::from_str(spec_yaml)?;
     let raw_yaml = spec_yaml.to_string();

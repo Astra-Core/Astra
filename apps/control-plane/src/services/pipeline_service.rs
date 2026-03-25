@@ -1,12 +1,11 @@
 use crate::{
     models::api::{
         ApplySpecResponse, PipelineRunResponse, PipelineSummaryResponse, Progress,
-        StagedArtifactResponse, TableExecutionResponse, TableExecutionsResponse,
-        UpsertTableExecutionRequest,
+        StagedArtifactResponse, TableExecutionResponse, UpsertTableExecutionRequest,
     },
     repositories::{
         CreatePipelineRunRecord, PipelineRepository, RecordStagedArtifactRecord,
-        TableExecutionRecord, UpsertTableExecutionRecord,
+        UpsertTableExecutionRecord,
     },
 };
 use chrono::Utc;
@@ -252,6 +251,10 @@ impl PipelineService {
                 rows_processed: table.rows_processed,
                 rows_total: table.rows_total,
                 error_summary: table.error_summary,
+                checkpoint_next_sequence: table.checkpoint_next_sequence,
+                checkpoint_rows_staged: table.checkpoint_rows_staged,
+                checkpoint_last_chunk_key: table.checkpoint_last_chunk_key,
+                checkpoint_completed: table.checkpoint_completed,
                 started_at: table.started_at,
                 finished_at: table.finished_at,
                 updated_at: table.updated_at,
@@ -271,6 +274,10 @@ impl PipelineService {
             rows_processed: request.rows_processed,
             rows_total: request.rows_total,
             error_summary: request.error_summary,
+            checkpoint_next_sequence: request.checkpoint_next_sequence,
+            checkpoint_rows_staged: request.checkpoint_rows_staged,
+            checkpoint_last_chunk_key: request.checkpoint_last_chunk_key,
+            checkpoint_completed: request.checkpoint_completed,
         };
         let table = self.repository.upsert_table_execution(record).await?;
         Ok(TableExecutionResponse {
@@ -280,6 +287,10 @@ impl PipelineService {
             rows_processed: table.rows_processed,
             rows_total: table.rows_total,
             error_summary: table.error_summary,
+            checkpoint_next_sequence: table.checkpoint_next_sequence,
+            checkpoint_rows_staged: table.checkpoint_rows_staged,
+            checkpoint_last_chunk_key: table.checkpoint_last_chunk_key,
+            checkpoint_completed: table.checkpoint_completed,
             started_at: table.started_at,
             finished_at: table.finished_at,
             updated_at: table.updated_at,
