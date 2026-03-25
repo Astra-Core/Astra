@@ -118,6 +118,7 @@ pub struct UpdatePipelineRunStatusRequest {
     #[serde(default)]
     pub stats_json: Option<serde_json::Value>,
 }
+
 #[derive(Debug, Serialize)]
 pub struct TableExecutionResponse {
     pub id: Uuid,
