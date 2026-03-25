@@ -7,36 +7,65 @@ use astra_control_plane::repositories::{
 use astra_yaml::AstraSpec;
 use chrono::Utc;
 use serde_json::json;
-use testcontainers::runners::AsyncRunner;
-use testcontainers_modules::postgres::Postgres;
-use uuid::Uuid;
+use testcontainers::{core::RunnableImage, core::WaitFor, runners::AsyncRunner, GenericImage};
 
 #[tokio::test]
 async fn test_pg_repo_full_flow() -> Result<()> {
-    let postgres_image = Postgres::default();
-    let node = postgres_image.start().await?;
-    let pg_url = format!(
-        "postgres://postgres:postgres@localhost:{}",
-        node.get_host_port_ipv4(5432).await?
-    );
+    let postgres_image = RunnableImage::from(
+        GenericImage::new("postgres", "15")
+            .with_env_var("POSTGRES_PASSWORD", "postgres")
+            .with_env_var("POSTGRES_USER", "postgres")
+            .with_env_var("POSTGRES_DB", "postgres")
+            .with_wait_for(WaitFor::message_on_stderr(
+                "database system is ready to accept connections",
+            )),
+    )
+    .with_mapped_port((55432, 5432));
+    let _node = postgres_image.start().await?;
+    let pg_url = "postgres://postgres:postgres@localhost:55432".to_string();
 
     // First repo instance
     let repo1 = PostgresPipelineRepository::connect(&pg_url).await?;
 
-    let pipeline_name = format!("test-pg-{}", Uuid::new_v4());
+    let pipeline_name = "test-pipeline".to_string();
 
     let spec_yaml = r#"
+version: v1alpha1
 pipeline:
   name: test-pipeline
+  mode: snapshot
+  schedule: manual
 source:
   kind: postgres
-  config:
-    connection_string: postgres://foo
+  connection:
+    host: localhost
+    port: 5432
+    database: astra
+    username: astra
+    passwordRef: env:POSTGRES_PASSWORD
+  capture:
+    tables:
+      - public.orders
+    snapshot:
+      mode: full
 destination:
-  kind: s3
-  config:
-    bucket: bar
-version: 1.0
+  kind: postgres
+  connection:
+    host: localhost
+    port: 5432
+    database: astra
+    username: astra
+    passwordRef: env:POSTGRES_PASSWORD
+    schema: astra
+  staging:
+    kind: local
+    bucket: astra-staging
+    prefix: test-pipeline/
+  write:
+    mode: append
+runtime:
+  parallelism:
+    tables: 1
 "#;
     let spec: AstraSpec = serde_yaml::from_str(spec_yaml).context("parse spec")?;
     let raw_yaml = spec_yaml.to_string();
@@ -198,25 +227,60 @@ version: 1.0
 
 #[tokio::test]
 async fn test_pg_repo_list_pipelines() -> Result<()> {
-    let postgres_image = Postgres::default();
-    let node = postgres_image.start().await?;
-    let pg_url = format!(
-        "postgres://postgres:postgres@localhost:{}",
-        node.get_host_port_ipv4(5432).await?
-    );
+    let postgres_image = RunnableImage::from(
+        GenericImage::new("postgres", "15")
+            .with_env_var("POSTGRES_PASSWORD", "postgres")
+            .with_env_var("POSTGRES_USER", "postgres")
+            .with_env_var("POSTGRES_DB", "postgres")
+            .with_wait_for(WaitFor::message_on_stderr(
+                "database system is ready to accept connections",
+            )),
+    )
+    .with_mapped_port((55433, 5432));
+    let _node = postgres_image.start().await?;
+    let pg_url = "postgres://postgres:postgres@localhost:55433".to_string();
 
     let repo = PostgresPipelineRepository::connect(&pg_url).await?;
 
-    let pipeline_name = format!("test-list-{}", Uuid::new_v4());
+    let pipeline_name = "test-list-pipeline".to_string();
 
     let spec_yaml = r#"
+version: v1alpha1
 pipeline:
   name: test-list-pipeline
+  mode: snapshot
+  schedule: manual
 source:
   kind: postgres
+  connection:
+    host: localhost
+    port: 5432
+    database: astra
+    username: astra
+    passwordRef: env:POSTGRES_PASSWORD
+  capture:
+    tables:
+      - public.orders
+    snapshot:
+      mode: full
 destination:
-  kind: s3
-version: 1.0
+  kind: postgres
+  connection:
+    host: localhost
+    port: 5432
+    database: astra
+    username: astra
+    passwordRef: env:POSTGRES_PASSWORD
+    schema: astra
+  staging:
+    kind: local
+    bucket: astra-staging
+    prefix: test-list-pipeline/
+  write:
+    mode: append
+runtime:
+  parallelism:
+    tables: 1
 "#;
     let spec: AstraSpec = serde_yaml::from_str(spec_yaml)?;
     let raw_yaml = spec_yaml.to_string();

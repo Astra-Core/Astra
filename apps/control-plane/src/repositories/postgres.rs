@@ -364,7 +364,7 @@ impl PipelineRepository for PostgresPipelineRepository {
                 SELECT $1, p.id, $2, $3, $4, $5
                 FROM pipelines p
                 WHERE p.name = $6
-                RETURNING id, trigger_mode, status, worker_id, started_at, finished_at, created_at, updated_at
+                RETURNING id, $6::text AS pipeline_name, trigger_mode, status, worker_id, started_at, finished_at, created_at, updated_at
                 "#,
                 &[
                     &Uuid::new_v4(),
