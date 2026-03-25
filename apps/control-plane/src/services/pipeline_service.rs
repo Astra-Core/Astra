@@ -239,7 +239,10 @@ impl PipelineService {
         &self,
         pipeline_run_id: Uuid,
     ) -> anyhow::Result<Vec<TableExecutionResponse>> {
-        let tables = self.repository.list_table_executions(pipeline_run_id).await?;
+        let tables = self
+            .repository
+            .list_table_executions(pipeline_run_id)
+            .await?;
         Ok(tables
             .into_iter()
             .map(|table| TableExecutionResponse {

@@ -8,8 +8,8 @@ use astra_yaml::AstraSpec;
 use chrono::Utc;
 use serde_json::json;
 use testcontainers::clients::Cli;
-use testcontainers::images::generic::GenericImage;
 use testcontainers::core::WaitFor;
+use testcontainers::images::generic::GenericImage;
 use testcontainers::IntoContainerPort;
 use uuid::Uuid;
 

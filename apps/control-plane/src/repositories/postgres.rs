@@ -1,7 +1,7 @@
 use crate::repositories::{
     AppliedPipelineRecord, CreatePipelineRunRecord, PipelineRecord, PipelineRepository,
-    PipelineRunRecord, RecordStagedArtifactRecord, StagedArtifactRecord,
-    TableExecutionRecord, UpsertTableExecutionRecord,
+    PipelineRunRecord, RecordStagedArtifactRecord, StagedArtifactRecord, TableExecutionRecord,
+    UpsertTableExecutionRecord,
 };
 use anyhow::Context;
 use async_trait::async_trait;
@@ -538,7 +538,12 @@ impl PipelineRepository for PostgresPipelineRepository {
                 &[&pipeline_run_id],
             )
             .await
-            .with_context(|| format!("failed to list table executions for run '{}'", pipeline_run_id))?;
+            .with_context(|| {
+                format!(
+                    "failed to list table executions for run '{}'",
+                    pipeline_run_id
+                )
+            })?;
 
         Ok(rows.into_iter().map(map_table_execution_row).collect())
     }
