@@ -1,9 +1,13 @@
 use crate::{
     models::api::{
         ApplySpecResponse, PipelineRunResponse, PipelineSummaryResponse, Progress,
-        StagedArtifactResponse,
+        StagedArtifactResponse, TableExecutionResponse, TableExecutionsResponse,
+        UpsertTableExecutionRequest,
     },
-    repositories::{CreatePipelineRunRecord, PipelineRepository, RecordStagedArtifactRecord},
+    repositories::{
+        CreatePipelineRunRecord, PipelineRepository, RecordStagedArtifactRecord,
+        TableExecutionRecord, UpsertTableExecutionRecord,
+    },
 };
 use chrono::Utc;
 use std::sync::Arc;
@@ -229,6 +233,57 @@ impl PipelineService {
                 created_at: artifact.created_at,
             })
             .collect())
+    }
+
+    pub async fn list_table_executions(
+        &self,
+        pipeline_run_id: Uuid,
+    ) -> anyhow::Result<Vec<TableExecutionResponse>> {
+        let tables = self
+            .repository
+            .list_table_executions(pipeline_run_id)
+            .await?;
+        Ok(tables
+            .into_iter()
+            .map(|table| TableExecutionResponse {
+                id: table.id,
+                stream_name: table.stream_name,
+                status: table.status,
+                rows_processed: table.rows_processed,
+                rows_total: table.rows_total,
+                error_summary: table.error_summary,
+                started_at: table.started_at,
+                finished_at: table.finished_at,
+                updated_at: table.updated_at,
+            })
+            .collect())
+    }
+
+    pub async fn upsert_table_execution(
+        &self,
+        pipeline_run_id: Uuid,
+        request: UpsertTableExecutionRequest,
+    ) -> anyhow::Result<TableExecutionResponse> {
+        let record = UpsertTableExecutionRecord {
+            pipeline_run_id,
+            stream_name: request.stream_name,
+            status: request.status,
+            rows_processed: request.rows_processed,
+            rows_total: request.rows_total,
+            error_summary: request.error_summary,
+        };
+        let table = self.repository.upsert_table_execution(record).await?;
+        Ok(TableExecutionResponse {
+            id: table.id,
+            stream_name: table.stream_name,
+            status: table.status,
+            rows_processed: table.rows_processed,
+            rows_total: table.rows_total,
+            error_summary: table.error_summary,
+            started_at: table.started_at,
+            finished_at: table.finished_at,
+            updated_at: table.updated_at,
+        })
     }
 
     pub async fn get_pipeline_yaml(&self, pipeline_name: &str) -> anyhow::Result<Option<String>> {

@@ -8,26 +8,21 @@ use astra_yaml::AstraSpec;
 use chrono::Utc;
 use serde_json::json;
 use testcontainers::clients::Cli;
-use testcontainers::core::WaitFor;
-use testcontainers::images::generic::GenericImage;
-use testcontainers::IntoContainerPort;
+use testcontainers::GenericImage;
 use uuid::Uuid;
 
 #[tokio::test]
 async fn test_pg_repo_full_flow() -> Result<()> {
     let docker = Cli::default();
-    let postgres_image = GenericImage::new("postgres", "latest")
-        .with_exposed_port(5432.tcp())
+    let postgres_image = GenericImage::new("postgres", "15")
         .with_env_var("POSTGRES_PASSWORD", "postgres")
         .with_env_var("POSTGRES_USER", "postgres")
         .with_env_var("POSTGRES_DB", "postgres")
-        .with_wait_for(WaitFor::message_on_stdout(
-            "database system is ready to accept connections",
-        ));
+        .with_exposed_port(5432);
     let node = docker.run(postgres_image);
     let pg_url = format!(
         "postgres://postgres:postgres@localhost:{}",
-        node.get_host_port_ipv4(5432)?
+        node.get_host_port_ipv4(5432)
     );
 
     // First repo instance
@@ -123,18 +118,15 @@ version: 1.0
 #[tokio::test]
 async fn test_pg_repo_list_pipelines() -> Result<()> {
     let docker = Cli::default();
-    let postgres_image = GenericImage::new("postgres", "latest")
-        .with_exposed_port(5432.tcp())
+    let postgres_image = GenericImage::new("postgres", "15")
         .with_env_var("POSTGRES_PASSWORD", "postgres")
         .with_env_var("POSTGRES_USER", "postgres")
         .with_env_var("POSTGRES_DB", "postgres")
-        .with_wait_for(WaitFor::message_on_stdout(
-            "database system is ready to accept connections",
-        ));
+        .with_exposed_port(5432);
     let node = docker.run(postgres_image);
     let pg_url = format!(
         "postgres://postgres:postgres@localhost:{}",
-        node.get_host_port_ipv4(5432)?
+        node.get_host_port_ipv4(5432)
     );
 
     let repo = PostgresPipelineRepository::connect(&pg_url).await?;

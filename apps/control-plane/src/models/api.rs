@@ -118,3 +118,37 @@ pub struct UpdatePipelineRunStatusRequest {
     #[serde(default)]
     pub stats_json: Option<serde_json::Value>,
 }
+#[derive(Debug, Serialize)]
+pub struct TableExecutionResponse {
+    pub id: Uuid,
+    pub stream_name: String,
+    pub status: String,
+    pub rows_processed: i64,
+    pub rows_total: Option<i64>,
+    pub error_summary: Option<String>,
+    pub started_at: DateTime<Utc>,
+    pub finished_at: Option<DateTime<Utc>>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct TableExecutionsResponse {
+    pub tables: Vec<TableExecutionResponse>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpsertTableExecutionRequest {
+    pub stream_name: String,
+    pub status: String,
+    pub rows_processed: i64,
+    pub rows_total: Option<i64>,
+    pub error_summary: Option<String>,
+}
+
+pub enum RunStatus {
+    Pending,
+    Running,
+    Succeeded,
+    Failed,
+    Cancelled,
+}

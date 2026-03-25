@@ -2,7 +2,8 @@ use crate::{
     error::AppError,
     models::api::{
         ApplySpecRequest, CreatePipelineRunRequest, PipelineRunsResponse, PipelinesResponse,
-        RecordStagedArtifactRequest, StagedArtifactsResponse,
+        RecordStagedArtifactRequest, StagedArtifactsResponse, TableExecutionResponse,
+        TableExecutionsResponse, UpsertTableExecutionRequest,
     },
     state::AppState,
 };

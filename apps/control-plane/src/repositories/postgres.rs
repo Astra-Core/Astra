@@ -1,6 +1,7 @@
 use crate::repositories::{
     AppliedPipelineRecord, CreatePipelineRunRecord, PipelineRecord, PipelineRepository,
-    PipelineRunRecord, RecordStagedArtifactRecord, StagedArtifactRecord,
+    PipelineRunRecord, RecordStagedArtifactRecord, StagedArtifactRecord, TableExecutionRecord,
+    UpsertTableExecutionRecord,
 };
 use anyhow::Context;
 use async_trait::async_trait;
@@ -105,6 +106,23 @@ impl PostgresPipelineRepository {
 
                 CREATE INDEX IF NOT EXISTS idx_staged_artifacts_run_stream_sequence
                     ON staged_artifacts (pipeline_run_id, stream_name, partition_key, sequence);
+
+                CREATE TABLE IF NOT EXISTS table_executions (
+                    id UUID PRIMARY KEY,
+                    pipeline_run_id UUID NOT NULL REFERENCES pipeline_runs(id) ON DELETE CASCADE,
+                    stream_name TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    rows_processed BIGINT NOT NULL DEFAULT 0,
+                    rows_total BIGINT,
+                    error_summary TEXT,
+                    started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    finished_at TIMESTAMPTZ,
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    UNIQUE(pipeline_run_id, stream_name)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_table_executions_run
+                    ON table_executions (pipeline_run_id);
                 "#,
             )
             .await
@@ -499,6 +517,89 @@ impl PipelineRepository for PostgresPipelineRepository {
             .with_context(|| format!("failed to list staged artifacts for run '{}'", pipeline_run_id))?;
 
         Ok(rows.into_iter().map(map_staged_artifact_row).collect())
+    }
+
+    async fn list_table_executions(
+        &self,
+        pipeline_run_id: Uuid,
+    ) -> anyhow::Result<Vec<TableExecutionRecord>> {
+        let rows = self
+            .client
+            .lock()
+            .await
+            .query(
+                r#"
+                SELECT id, pipeline_run_id, stream_name, status, rows_processed, rows_total,
+                       error_summary, started_at, finished_at, updated_at
+                FROM table_executions
+                WHERE pipeline_run_id = $1
+                ORDER BY stream_name ASC
+                "#,
+                &[&pipeline_run_id],
+            )
+            .await
+            .with_context(|| {
+                format!(
+                    "failed to list table executions for run '{}'",
+                    pipeline_run_id
+                )
+            })?;
+
+        Ok(rows.into_iter().map(map_table_execution_row).collect())
+    }
+
+    async fn upsert_table_execution(
+        &self,
+        record: UpsertTableExecutionRecord,
+    ) -> anyhow::Result<TableExecutionRecord> {
+        let client = self.client.lock().await;
+        let row = client.query_one(
+            r#"
+            INSERT INTO table_executions (
+                id, pipeline_run_id, stream_name, status, rows_processed, rows_total, error_summary
+            )
+            VALUES (
+                gen_random_uuid(), $1, $2, $3, $4, $5, $6
+            )
+            ON CONFLICT (pipeline_run_id, stream_name)
+            DO UPDATE SET
+                status = EXCLUDED.status,
+                rows_processed = EXCLUDED.rows_processed,
+                rows_total = EXCLUDED.rows_total,
+                error_summary = EXCLUDED.error_summary,
+                finished_at = CASE WHEN EXCLUDED.status IN ('staged', 'applied', 'failed') THEN NOW() ELSE table_executions.finished_at END,
+                updated_at = NOW()
+            RETURNING id, pipeline_run_id, stream_name, status, rows_processed, rows_total,
+                      error_summary, started_at, finished_at, updated_at
+            "#,
+            &[
+                &record.pipeline_run_id,
+                &record.stream_name,
+                &record.status,
+                &record.rows_processed,
+                &record.rows_total,
+                &record.error_summary,
+            ],
+        )
+        .await
+        .with_context(|| format!("failed to upsert table execution for run '{}' table '{}'", record.pipeline_run_id, record.stream_name))?;
+
+        Ok(map_table_execution_row(row))
+    }
+}
+
+fn map_table_execution_row(row: Row) -> TableExecutionRecord {
+    TableExecutionRecord {
+        id: row.get("id"),
+        pipeline_run_id: row.get("pipeline_run_id"),
+        stream_name: row.get("stream_name"),
+        status: row.get("status"),
+        rows_processed: row.get("rows_processed"),
+        rows_total: row.get("rows_total"),
+        error_summary: row.get("error_summary"),
+        started_at: row.get("started_at"),
+        finished_at: row.get("finished_at"),
+        updated_at: row.get("updated_at"),
     }
 }
 

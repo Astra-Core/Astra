@@ -1,6 +1,7 @@
 use crate::repositories::{
     AppliedPipelineRecord, CreatePipelineRunRecord, PipelineRecord, PipelineRepository,
-    PipelineRunRecord, RecordStagedArtifactRecord, StagedArtifactRecord,
+    PipelineRunRecord, RecordStagedArtifactRecord, StagedArtifactRecord, TableExecutionRecord,
+    UpsertTableExecutionRecord,
 };
 use anyhow::anyhow;
 use async_trait::async_trait;
@@ -15,6 +16,7 @@ pub struct InMemoryPipelineRepository {
     inner: Arc<RwLock<HashMap<String, StoredPipeline>>>,
     runs: Arc<RwLock<HashMap<Uuid, PipelineRunRecord>>>,
     artifacts: Arc<RwLock<HashMap<Uuid, Vec<StagedArtifactRecord>>>>,
+    table_executions: Arc<RwLock<HashMap<Uuid, HashMap<String, TableExecutionRecord>>>>,
 }
 
 #[derive(Clone)]
@@ -254,6 +256,72 @@ impl PipelineRepository for InMemoryPipelineRepository {
                 .then_with(|| a.sequence.cmp(&b.sequence))
         });
         Ok(artifacts)
+    }
+
+    async fn list_table_executions(
+        &self,
+        pipeline_run_id: Uuid,
+    ) -> anyhow::Result<Vec<TableExecutionRecord>> {
+        let mut tables: Vec<_> = self
+            .table_executions
+            .read()
+            .await
+            .get(&pipeline_run_id)
+            .map(|tables| tables.values().cloned().collect())
+            .unwrap_or_default();
+        tables.sort_by(|a, b| a.stream_name.cmp(&b.stream_name));
+        Ok(tables)
+    }
+
+    async fn upsert_table_execution(
+        &self,
+        record: UpsertTableExecutionRecord,
+    ) -> anyhow::Result<TableExecutionRecord> {
+        let runs = self.runs.read().await;
+        if !runs.contains_key(&record.pipeline_run_id) {
+            return Err(anyhow!(
+                "pipeline run '{}' does not exist",
+                record.pipeline_run_id
+            ));
+        }
+        drop(runs);
+
+        let mut table_executions = self.table_executions.write().await;
+        let tables_for_run = table_executions
+            .entry(record.pipeline_run_id)
+            .or_insert_with(HashMap::new);
+
+        let now = Utc::now();
+        let finished = matches!(record.status.as_str(), "staged" | "applied" | "failed");
+
+        let table = if let Some(existing) = tables_for_run.get_mut(&record.stream_name) {
+            existing.status = record.status;
+            existing.rows_processed = record.rows_processed;
+            existing.rows_total = record.rows_total;
+            existing.error_summary = record.error_summary;
+            if finished {
+                existing.finished_at = Some(now);
+            }
+            existing.updated_at = now;
+            existing.clone()
+        } else {
+            let table = TableExecutionRecord {
+                id: Uuid::new_v4(),
+                pipeline_run_id: record.pipeline_run_id,
+                stream_name: record.stream_name.clone(),
+                status: record.status,
+                rows_processed: record.rows_processed,
+                rows_total: record.rows_total,
+                error_summary: record.error_summary,
+                started_at: now,
+                finished_at: if finished { Some(now) } else { None },
+                updated_at: now,
+            };
+            tables_for_run.insert(record.stream_name, table.clone());
+            table
+        };
+
+        Ok(table)
     }
 }
 
