@@ -1,8 +1,8 @@
 use anyhow::{Context, Result};
 use astra_control_plane::repositories::{
     pipeline_repository::UpsertTableExecutionRecord, CreatePipelineRunRecord, PipelineRecord,
-    PipelineRepository, PipelineRunRecord, PostgresPipelineRepository,
-    RecordStagedArtifactRecord, StagedArtifactRecord,
+    PipelineRepository, PipelineRunRecord, PostgresPipelineRepository, RecordStagedArtifactRecord,
+    StagedArtifactRecord,
 };
 use astra_yaml::AstraSpec;
 use chrono::Utc;
