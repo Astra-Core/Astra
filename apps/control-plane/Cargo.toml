@@ -31,6 +31,7 @@ astra-secrets = { path = "../../crates/astra-secrets" }
 astra-yaml = { path = "../../crates/astra-yaml" }
 
 [dev-dependencies]
-testcontainers = "0.15"
+testcontainers = "0.17"
+testcontainers-modules = { version = "0.5", features = ["postgres"] }
 tokio-postgres = { version = "0.7", default-features = false, features = ["runtime", "with-uuid-1", "with-chrono-0_4", "with-serde_json-1"] }
 serde_yaml.workspace = true

@@ -1,33 +1,23 @@
 use anyhow::{Context, Result};
 use astra_control_plane::repositories::{
-    AppliedPipelineRecord, CreatePipelineRunRecord, PipelineRecord, PipelineRepository,
-    PipelineRunRecord, PostgresPipelineRepository, RecordStagedArtifactRecord,
-    StagedArtifactRecord,
+    pipeline_repository::UpsertTableExecutionRecord, CreatePipelineRunRecord, PipelineRecord,
+    PipelineRepository, PipelineRunRecord, PostgresPipelineRepository,
+    RecordStagedArtifactRecord, StagedArtifactRecord,
 };
 use astra_yaml::AstraSpec;
 use chrono::Utc;
 use serde_json::json;
-use testcontainers::clients::Cli;
-use testcontainers::core::WaitFor;
-use testcontainers::images::generic::GenericImage;
-use testcontainers::IntoContainerPort;
+use testcontainers::runners::AsyncRunner;
+use testcontainers_modules::postgres::Postgres;
 use uuid::Uuid;
 
 #[tokio::test]
 async fn test_pg_repo_full_flow() -> Result<()> {
-    let docker = Cli::default();
-    let postgres_image = GenericImage::new("postgres", "latest")
-        .with_exposed_port(5432.tcp())
-        .with_env_var("POSTGRES_PASSWORD", "postgres")
-        .with_env_var("POSTGRES_USER", "postgres")
-        .with_env_var("POSTGRES_DB", "postgres")
-        .with_wait_for(WaitFor::message_on_stdout(
-            "database system is ready to accept connections",
-        ));
-    let node = docker.run(postgres_image);
+    let postgres_image = Postgres::default();
+    let node = postgres_image.start().await?;
     let pg_url = format!(
         "postgres://postgres:postgres@localhost:{}",
-        node.get_host_port_ipv4(5432)?
+        node.get_host_port_ipv4(5432).await?
     );
 
     // First repo instance
@@ -117,24 +107,72 @@ version: 1.0
     let artifacts2: Vec<StagedArtifactRecord> = repo2.list_staged_artifacts(run_id).await?;
     assert_eq!(artifacts2.len(), 1);
 
+    // Test table execution lifecycle and persistence
+    let upsert_rec = UpsertTableExecutionRecord {
+        pipeline_run_id: run_id,
+        stream_name: "test_stream".to_string(),
+        status: "running".to_string(),
+        rows_processed: 0i64,
+        rows_total: Some(100i64),
+        error_summary: None,
+    };
+    let table_exec = repo2.upsert_table_execution(upsert_rec).await?;
+    assert_eq!(table_exec.status, "running");
+    assert_eq!(table_exec.rows_processed, 0i64);
+
+    let execs = repo2.list_table_executions(run_id).await?;
+    assert_eq!(execs.len(), 1);
+
+    let upsert_rec_terminal = UpsertTableExecutionRecord {
+        pipeline_run_id: run_id,
+        stream_name: "test_stream".to_string(),
+        status: "failed".to_string(),
+        rows_processed: 50i64,
+        rows_total: Some(100i64),
+        error_summary: Some("test error message".to_string()),
+    };
+    let table_exec_terminal = repo2.upsert_table_execution(upsert_rec_terminal).await?;
+    assert_eq!(table_exec_terminal.status, "failed");
+    assert!(table_exec_terminal.finished_at.is_some());
+    assert_eq!(
+        table_exec_terminal.error_summary,
+        Some("test error message".to_string())
+    );
+
+    // Verify table exec persistence
+    drop(repo2);
+    let repo3 = PostgresPipelineRepository::connect(&pg_url).await?;
+    let execs3 = repo3.list_table_executions(run_id).await?;
+    assert_eq!(execs3.len(), 1);
+    assert_eq!(execs3[0].status, "failed");
+
+    // Test cancelled run status
+    let now = Utc::now();
+    let create_rec_cancel = CreatePipelineRunRecord {
+        pipeline_name: pipeline_name.clone(),
+        trigger_mode: "manual".to_string(),
+        status: "running".to_string(),
+        worker_id: Some("test-worker-cancel".to_string()),
+        started_at: now,
+    };
+    let run_cancel = repo3.create_pipeline_run(create_rec_cancel).await?;
+    let stats_cancel = json!({});
+    let updated_cancel = repo3
+        .update_pipeline_run_status(run_cancel.id, "cancelled".to_string(), stats_cancel)
+        .await?;
+    assert_eq!(updated_cancel.status, "cancelled");
+    assert!(updated_cancel.finished_at.is_some());
+
     Ok(())
 }
 
 #[tokio::test]
 async fn test_pg_repo_list_pipelines() -> Result<()> {
-    let docker = Cli::default();
-    let postgres_image = GenericImage::new("postgres", "latest")
-        .with_exposed_port(5432.tcp())
-        .with_env_var("POSTGRES_PASSWORD", "postgres")
-        .with_env_var("POSTGRES_USER", "postgres")
-        .with_env_var("POSTGRES_DB", "postgres")
-        .with_wait_for(WaitFor::message_on_stdout(
-            "database system is ready to accept connections",
-        ));
-    let node = docker.run(postgres_image);
+    let postgres_image = Postgres::default();
+    let node = postgres_image.start().await?;
     let pg_url = format!(
         "postgres://postgres:postgres@localhost:{}",
-        node.get_host_port_ipv4(5432)?
+        node.get_host_port_ipv4(5432).await?
     );
 
     let repo = PostgresPipelineRepository::connect(&pg_url).await?;
