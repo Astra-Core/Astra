@@ -227,7 +227,11 @@ pub async fn snapshot_to_local_staging(
                     chunk.row_count as i64,
                     Some(chunk.row_count as i64),
                     None,
-                    Some((table.sequence + 1).try_into().context("sequence overflow")?),
+                    Some(
+                        (table.sequence + 1)
+                            .try_into()
+                            .context("sequence overflow")?,
+                    ),
                     Some(chunk.row_count as i64),
                     Some(chunk.object_key.clone()),
                     Some(false),
@@ -257,11 +261,20 @@ pub async fn snapshot_to_local_staging(
                 .upsert_table_execution(
                     &run_id,
                     &progress.table,
-                    if progress.finished { "snapshot_complete" } else { "snapshot_running" },
+                    if progress.finished {
+                        "snapshot_complete"
+                    } else {
+                        "snapshot_running"
+                    },
                     progress.rows_emitted as i64,
                     None,
                     None,
-                    Some(progress.next_sequence.try_into().context("sequence overflow")?),
+                    Some(
+                        progress
+                            .next_sequence
+                            .try_into()
+                            .context("sequence overflow")?,
+                    ),
                     Some(progress.rows_emitted as i64),
                     existing_ledger
                         .tables
@@ -285,7 +298,11 @@ pub async fn snapshot_to_local_staging(
     );
 
     if let (Some(control_plane), Some(run_id)) = (&control_plane, run_id.as_deref()) {
-        let tables_completed = final_ledger.tables.values().filter(|cp| cp.completed).count();
+        let tables_completed = final_ledger
+            .tables
+            .values()
+            .filter(|cp| cp.completed)
+            .count();
         let rows_staged: i64 = final_ledger
             .tables
             .values()
@@ -610,7 +627,11 @@ impl ControlPlaneClient {
         })
     }
 
-    async fn create_pipeline_run(&self, pipeline_name: &str, trigger_mode: &str) -> anyhow::Result<String> {
+    async fn create_pipeline_run(
+        &self,
+        pipeline_name: &str,
+        trigger_mode: &str,
+    ) -> anyhow::Result<String> {
         let response: Value = self
             .http
             .post(format!("{}/api/v1/pipeline-runs", self.base_url))
@@ -644,9 +665,11 @@ impl ControlPlaneClient {
         row_count: i64,
         metadata_json: Value,
     ) -> anyhow::Result<()> {
-        self
-            .http
-            .post(format!("{}/api/v1/pipeline-runs/{}/artifacts", self.base_url, run_id))
+        self.http
+            .post(format!(
+                "{}/api/v1/pipeline-runs/{}/artifacts",
+                self.base_url, run_id
+            ))
             .json(&json!({
                 "stream_name": stream_name,
                 "partition_key": partition_key,
@@ -678,9 +701,11 @@ impl ControlPlaneClient {
         checkpoint_last_chunk_key: Option<String>,
         checkpoint_completed: Option<bool>,
     ) -> anyhow::Result<()> {
-        self
-            .http
-            .post(format!("{}/api/v1/pipeline-runs/{}/table-executions", self.base_url, run_id))
+        self.http
+            .post(format!(
+                "{}/api/v1/pipeline-runs/{}/table-executions",
+                self.base_url, run_id
+            ))
             .json(&json!({
                 "stream_name": stream_name,
                 "status": status,
@@ -698,10 +723,17 @@ impl ControlPlaneClient {
         Ok(())
     }
 
-    async fn update_run_status(&self, run_id: &str, status: &str, stats_json: Option<Value>) -> anyhow::Result<()> {
-        self
-            .http
-            .post(format!("{}/api/v1/pipeline-runs/{}/status", self.base_url, run_id))
+    async fn update_run_status(
+        &self,
+        run_id: &str,
+        status: &str,
+        stats_json: Option<Value>,
+    ) -> anyhow::Result<()> {
+        self.http
+            .post(format!(
+                "{}/api/v1/pipeline-runs/{}/status",
+                self.base_url, run_id
+            ))
             .json(&json!({
                 "status": status,
                 "stats_json": stats_json,

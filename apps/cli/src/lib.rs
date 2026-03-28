@@ -52,8 +52,10 @@ async fn dispatch(command: Command) -> anyhow::Result<()> {
             )
             .await
         }
-        Command::LoadLocalStagingToPostgres { file, staging_root, control_plane_url } => {
-            commands::load_local_staging_to_postgres(&file, staging_root, control_plane_url).await
-        }
+        Command::LoadLocalStagingToPostgres {
+            file,
+            staging_root,
+            control_plane_url,
+        } => commands::load_local_staging_to_postgres(&file, staging_root, control_plane_url).await,
     }
 }
