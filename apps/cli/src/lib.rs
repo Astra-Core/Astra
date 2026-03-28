@@ -21,6 +21,7 @@ async fn dispatch(command: Command) -> anyhow::Result<()> {
             checkpoint_root,
             chunk_size,
             no_resume,
+            control_plane_url,
         } => {
             commands::snapshot_to_local_staging(
                 &file,
@@ -29,6 +30,7 @@ async fn dispatch(command: Command) -> anyhow::Result<()> {
                 checkpoint_root,
                 chunk_size,
                 no_resume,
+                control_plane_url,
             )
             .await
         }
@@ -50,8 +52,8 @@ async fn dispatch(command: Command) -> anyhow::Result<()> {
             )
             .await
         }
-        Command::LoadLocalStagingToPostgres { file, staging_root } => {
-            commands::load_local_staging_to_postgres(&file, staging_root).await
+        Command::LoadLocalStagingToPostgres { file, staging_root, control_plane_url } => {
+            commands::load_local_staging_to_postgres(&file, staging_root, control_plane_url).await
         }
     }
 }

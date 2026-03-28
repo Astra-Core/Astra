@@ -12,3 +12,9 @@ tokio.workspace = true
 astra-yaml = { path = "../../crates/astra-yaml" }
 astra-connectors = { path = "../../crates/astra-connectors" }
 astra-runtime = { path = "../../crates/astra-runtime" }
+
+astra-api = { path = "../../crates/astra-api" }
+reqwest = { version = "0.12", features = ["json"] }
+uuid = { version = "1.10", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+serde_json.workspace = true
