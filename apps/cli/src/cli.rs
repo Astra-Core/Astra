@@ -29,6 +29,8 @@ pub enum Command {
         chunk_size: Option<u64>,
         #[arg(long)]
         no_resume: bool,
+        #[arg(long)]
+        control_plane_url: Option<String>,
     },
     /// Execute a minimal local Postgres snapshot and write staged chunks to MinIO/S3-compatible storage
     SnapshotToMinioStaging {
@@ -49,6 +51,8 @@ pub enum Command {
         file: String,
         #[arg(long)]
         staging_root: Option<PathBuf>,
+        #[arg(long)]
+        control_plane_url: Option<String>,
     },
 }
 
@@ -82,6 +86,7 @@ mod tests {
                 checkpoint_root: Some(PathBuf::from("/tmp/astra/checkpoints")),
                 chunk_size: Some(10),
                 no_resume: true,
+                control_plane_url: None,
             }
         );
     }
@@ -132,6 +137,7 @@ mod tests {
             Command::LoadLocalStagingToPostgres {
                 file: "examples/postgres-to-postgres-raw.astra.yaml".to_string(),
                 staging_root: Some(PathBuf::from("/tmp/astra/staging")),
+                control_plane_url: None,
             }
         );
     }

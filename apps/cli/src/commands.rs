@@ -8,6 +8,9 @@ use astra_runtime::{
     StageChunkStore, StagingConfig, StagingKind,
 };
 use astra_yaml::AstraSpec;
+use chrono::Utc;
+use reqwest::Client;
+use serde_json::{json, Value};
 use std::{collections::BTreeMap, path::PathBuf};
 
 pub fn validate(file: &str) -> anyhow::Result<()> {
@@ -89,6 +92,7 @@ pub async fn snapshot_to_local_staging(
     checkpoint_root: Option<PathBuf>,
     chunk_size: Option<u64>,
     no_resume: bool,
+    control_plane_url: Option<String>,
 ) -> anyhow::Result<()> {
     let spec = AstraSpec::from_file(file)?;
     spec.validate()?;
@@ -144,6 +148,20 @@ pub async fn snapshot_to_local_staging(
     store.ensure_ready().await?;
     checkpoint_store.ensure_ready()?;
 
+    let control_plane = control_plane_url
+        .as_deref()
+        .map(ControlPlaneClient::new)
+        .transpose()?;
+    let run_id = if let Some(control_plane) = &control_plane {
+        Some(
+            control_plane
+                .create_pipeline_run(&spec.pipeline.name, "manual")
+                .await?,
+        )
+    } else {
+        None
+    };
+
     println!("discovered postgres source: {}", spec.pipeline.name);
     println!("catalog tables: {}", discovery.catalog.tables.len());
     println!("local staging root: {}", root_dir.display());
@@ -187,6 +205,39 @@ pub async fn snapshot_to_local_staging(
         )?;
 
         let resolved = store.resolve_path(&chunk.object_key);
+        if let (Some(control_plane), Some(run_id)) = (&control_plane, run_id.as_deref()) {
+            control_plane
+                .record_staged_artifact(
+                    &run_id,
+                    &table.table,
+                    "default",
+                    table.sequence.try_into().context("sequence overflow")?,
+                    &chunk.bucket,
+                    &chunk.object_key,
+                    chunk.bytes_written as i64,
+                    chunk.row_count as i64,
+                    json!({"sql": table.sql}),
+                )
+                .await?;
+            control_plane
+                .upsert_table_execution(
+                    &run_id,
+                    &table.table,
+                    "staged",
+                    chunk.row_count as i64,
+                    Some(chunk.row_count as i64),
+                    None,
+                    Some(
+                        (table.sequence + 1)
+                            .try_into()
+                            .context("sequence overflow")?,
+                    ),
+                    Some(chunk.row_count as i64),
+                    Some(chunk.object_key.clone()),
+                    Some(false),
+                )
+                .await?;
+        }
         println!(
             "- {} -> {} rows -> {}",
             table.table,
@@ -205,6 +256,34 @@ pub async fn snapshot_to_local_staging(
         if progress.finished {
             checkpoint_store.mark_table_complete(&spec.pipeline.name, &progress.table)?;
         }
+        if let (Some(control_plane), Some(run_id)) = (&control_plane, run_id.as_deref()) {
+            control_plane
+                .upsert_table_execution(
+                    &run_id,
+                    &progress.table,
+                    if progress.finished {
+                        "snapshot_complete"
+                    } else {
+                        "snapshot_running"
+                    },
+                    progress.rows_emitted as i64,
+                    None,
+                    None,
+                    Some(
+                        progress
+                            .next_sequence
+                            .try_into()
+                            .context("sequence overflow")?,
+                    ),
+                    Some(progress.rows_emitted as i64),
+                    existing_ledger
+                        .tables
+                        .get(&progress.table)
+                        .and_then(|cp| cp.last_chunk_key.clone()),
+                    Some(progress.finished),
+                )
+                .await?;
+        }
         println!(
             "- {} -> next_sequence={} rows_emitted={} finished={}",
             progress.table, progress.next_sequence, progress.rows_emitted, progress.finished
@@ -217,6 +296,30 @@ pub async fn snapshot_to_local_staging(
         checkpoint_store.ledger_path(&spec.pipeline.name).display(),
         final_ledger.tables.len()
     );
+
+    if let (Some(control_plane), Some(run_id)) = (&control_plane, run_id.as_deref()) {
+        let tables_completed = final_ledger
+            .tables
+            .values()
+            .filter(|cp| cp.completed)
+            .count();
+        let rows_staged: i64 = final_ledger
+            .tables
+            .values()
+            .map(|cp| cp.rows_staged as i64)
+            .sum();
+        control_plane
+            .update_run_status(
+                &run_id,
+                "succeeded",
+                Some(json!({
+                    "tables_completed": tables_completed,
+                    "table_count": final_ledger.tables.len(),
+                    "rows_staged": rows_staged,
+                })),
+            )
+            .await?;
+    }
 
     Ok(())
 }
@@ -301,6 +404,7 @@ pub async fn snapshot_to_minio_staging(
 pub async fn load_local_staging_to_postgres(
     file: &str,
     staging_root: Option<PathBuf>,
+    control_plane_url: Option<String>,
 ) -> anyhow::Result<()> {
     let spec = AstraSpec::from_file(file)?;
     spec.validate()?;
@@ -322,6 +426,20 @@ pub async fn load_local_staging_to_postgres(
             prefix: staging.prefix.clone().unwrap_or_default(),
         },
     });
+
+    let control_plane = control_plane_url
+        .as_deref()
+        .map(ControlPlaneClient::new)
+        .transpose()?;
+    let run_id = if let Some(control_plane) = &control_plane {
+        Some(
+            control_plane
+                .create_pipeline_run(&spec.pipeline.name, "load-local-staging")
+                .await?,
+        )
+    } else {
+        None
+    };
 
     let staged_chunks = store.list_chunks_for_pipeline(&spec.pipeline.name)?;
     if staged_chunks.is_empty() {
@@ -350,7 +468,23 @@ pub async fn load_local_staging_to_postgres(
         loader.config().port
     );
     println!("local staging root: {}", root_dir.display());
-    for chunk in report.applied_chunks {
+    for chunk in &report.applied_chunks {
+        if let (Some(control_plane), Some(run_id)) = (&control_plane, run_id.as_deref()) {
+            control_plane
+                .upsert_table_execution(
+                    &run_id,
+                    &chunk.table_name,
+                    if chunk.skipped { "applied" } else { "applied" },
+                    chunk.rows_written as i64,
+                    Some(chunk.rows_written as i64),
+                    None,
+                    None,
+                    Some(chunk.rows_written as i64),
+                    Some(chunk.object_key.clone()),
+                    Some(true),
+                )
+                .await?;
+        }
         println!(
             "- {} -> {} ({})",
             chunk.object_key,
@@ -362,6 +496,25 @@ pub async fn load_local_staging_to_postgres(
             }
         );
         println!("  rows written: {}", chunk.rows_written);
+    }
+
+    if let (Some(control_plane), Some(run_id)) = (&control_plane, run_id.as_deref()) {
+        let total_rows: i64 = report
+            .applied_chunks
+            .iter()
+            .map(|chunk| chunk.rows_written as i64)
+            .sum();
+        control_plane
+            .update_run_status(
+                &run_id,
+                "succeeded",
+                Some(json!({
+                    "chunks_applied": report.applied_chunks.len(),
+                    "rows_written": total_rows,
+                    "schema": report.schema,
+                })),
+            )
+            .await?;
     }
 
     Ok(())
@@ -459,6 +612,137 @@ fn default_staging_root_from_env() -> Option<PathBuf> {
 
 fn default_checkpoint_root_from_env() -> Option<PathBuf> {
     std::env::var_os("ASTRA_CHECKPOINT_LOCAL_ROOT").map(PathBuf::from)
+}
+
+struct ControlPlaneClient {
+    base_url: String,
+    http: Client,
+}
+
+impl ControlPlaneClient {
+    fn new(base_url: &str) -> anyhow::Result<Self> {
+        Ok(Self {
+            base_url: base_url.trim_end_matches('/').to_string(),
+            http: Client::new(),
+        })
+    }
+
+    async fn create_pipeline_run(
+        &self,
+        pipeline_name: &str,
+        trigger_mode: &str,
+    ) -> anyhow::Result<String> {
+        let response: Value = self
+            .http
+            .post(format!("{}/api/v1/pipeline-runs", self.base_url))
+            .json(&json!({
+                "pipeline_name": pipeline_name,
+                "trigger_mode": trigger_mode,
+                "status": "running",
+                "started_at": Utc::now(),
+            }))
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+        response
+            .get("id")
+            .and_then(Value::as_str)
+            .map(ToString::to_string)
+            .context("control-plane create_pipeline_run response missing id")
+    }
+
+    async fn record_staged_artifact(
+        &self,
+        run_id: &str,
+        stream_name: &str,
+        partition_key: &str,
+        sequence: i64,
+        bucket: &str,
+        object_key: &str,
+        bytes_written: i64,
+        row_count: i64,
+        metadata_json: Value,
+    ) -> anyhow::Result<()> {
+        self.http
+            .post(format!(
+                "{}/api/v1/pipeline-runs/{}/artifacts",
+                self.base_url, run_id
+            ))
+            .json(&json!({
+                "stream_name": stream_name,
+                "partition_key": partition_key,
+                "sequence": sequence,
+                "bucket": bucket,
+                "object_key": object_key,
+                "bytes_written": bytes_written,
+                "row_count": row_count,
+                "content_type": "application/jsonl",
+                "content_encoding": "gzip",
+                "metadata_json": metadata_json,
+            }))
+            .send()
+            .await?
+            .error_for_status()?;
+        Ok(())
+    }
+
+    async fn upsert_table_execution(
+        &self,
+        run_id: &str,
+        stream_name: &str,
+        status: &str,
+        rows_processed: i64,
+        rows_total: Option<i64>,
+        error_summary: Option<String>,
+        checkpoint_next_sequence: Option<i64>,
+        checkpoint_rows_staged: Option<i64>,
+        checkpoint_last_chunk_key: Option<String>,
+        checkpoint_completed: Option<bool>,
+    ) -> anyhow::Result<()> {
+        self.http
+            .post(format!(
+                "{}/api/v1/pipeline-runs/{}/table-executions",
+                self.base_url, run_id
+            ))
+            .json(&json!({
+                "stream_name": stream_name,
+                "status": status,
+                "rows_processed": rows_processed,
+                "rows_total": rows_total,
+                "error_summary": error_summary,
+                "checkpoint_next_sequence": checkpoint_next_sequence,
+                "checkpoint_rows_staged": checkpoint_rows_staged,
+                "checkpoint_last_chunk_key": checkpoint_last_chunk_key,
+                "checkpoint_completed": checkpoint_completed,
+            }))
+            .send()
+            .await?
+            .error_for_status()?;
+        Ok(())
+    }
+
+    async fn update_run_status(
+        &self,
+        run_id: &str,
+        status: &str,
+        stats_json: Option<Value>,
+    ) -> anyhow::Result<()> {
+        self.http
+            .post(format!(
+                "{}/api/v1/pipeline-runs/{}/status",
+                self.base_url, run_id
+            ))
+            .json(&json!({
+                "status": status,
+                "stats_json": stats_json,
+            }))
+            .send()
+            .await?
+            .error_for_status()?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
