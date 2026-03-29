@@ -57,5 +57,25 @@ async fn dispatch(command: Command) -> anyhow::Result<()> {
             staging_root,
             control_plane_url,
         } => commands::load_local_staging_to_postgres(&file, staging_root, control_plane_url).await,
+        Command::ExecuteLocalSnapshot {
+            file,
+            max_rows_per_table,
+            staging_root,
+            checkpoint_root,
+            chunk_size,
+            no_resume,
+            control_plane_url,
+        } => {
+            commands::execute_local_snapshot(
+                &file,
+                max_rows_per_table,
+                staging_root,
+                checkpoint_root,
+                chunk_size,
+                no_resume,
+                control_plane_url,
+            )
+            .await
+        }
     }
 }

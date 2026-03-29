@@ -54,6 +54,22 @@ pub enum Command {
         #[arg(long)]
         control_plane_url: Option<String>,
     },
+    /// Run the narrow local snapshot happy path end to end: snapshot -> local staging -> Postgres load
+    ExecuteLocalSnapshot {
+        file: String,
+        #[arg(long)]
+        max_rows_per_table: Option<u64>,
+        #[arg(long)]
+        staging_root: Option<PathBuf>,
+        #[arg(long)]
+        checkpoint_root: Option<PathBuf>,
+        #[arg(long)]
+        chunk_size: Option<u64>,
+        #[arg(long)]
+        no_resume: bool,
+        #[arg(long)]
+        control_plane_url: Option<String>,
+    },
 }
 
 #[cfg(test)]
@@ -138,6 +154,39 @@ mod tests {
                 file: "examples/postgres-to-postgres-raw.astra.yaml".to_string(),
                 staging_root: Some(PathBuf::from("/tmp/astra/staging")),
                 control_plane_url: None,
+            }
+        );
+    }
+
+    #[test]
+    fn parses_execute_local_snapshot_flags() {
+        let cli = Cli::parse_from([
+            "astra",
+            "execute-local-snapshot",
+            "examples/postgres-to-postgres-raw.astra.yaml",
+            "--max-rows-per-table",
+            "100",
+            "--staging-root",
+            "/tmp/astra/staging",
+            "--checkpoint-root",
+            "/tmp/astra/checkpoints",
+            "--chunk-size",
+            "50",
+            "--no-resume",
+            "--control-plane-url",
+            "http://127.0.0.1:8080",
+        ]);
+
+        assert_eq!(
+            cli.command,
+            Command::ExecuteLocalSnapshot {
+                file: "examples/postgres-to-postgres-raw.astra.yaml".to_string(),
+                max_rows_per_table: Some(100),
+                staging_root: Some(PathBuf::from("/tmp/astra/staging")),
+                checkpoint_root: Some(PathBuf::from("/tmp/astra/checkpoints")),
+                chunk_size: Some(50),
+                no_resume: true,
+                control_plane_url: Some("http://127.0.0.1:8080".to_string()),
             }
         );
     }
