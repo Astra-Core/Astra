@@ -401,6 +401,45 @@ pub async fn snapshot_to_minio_staging(
     Ok(())
 }
 
+pub async fn execute_local_snapshot(
+    file: &str,
+    max_rows_per_table: Option<u64>,
+    staging_root: Option<PathBuf>,
+    checkpoint_root: Option<PathBuf>,
+    chunk_size: Option<u64>,
+    no_resume: bool,
+    control_plane_url: Option<String>,
+) -> anyhow::Result<()> {
+    let spec = AstraSpec::from_file(file)?;
+    spec.validate()?;
+    ensure_cdc_runtime_not_requested(&spec, "execute-local-snapshot")?;
+    ensure_supported_snapshot_source(&spec)?;
+    ensure_supported_local_snapshot_destination(&spec)?;
+
+    println!("local snapshot execution: {}", spec.pipeline.name);
+    println!("stage 1/2: snapshot -> local staging");
+    snapshot_to_local_staging(
+        file,
+        max_rows_per_table,
+        staging_root.clone(),
+        checkpoint_root,
+        chunk_size,
+        no_resume,
+        control_plane_url.clone(),
+    )
+    .await?;
+
+    println!("stage 2/2: local staging -> postgres");
+    load_local_staging_to_postgres(file, staging_root, control_plane_url).await?;
+
+    println!(
+        "local snapshot execution complete: {} (snapshot -> local staging -> postgres)",
+        spec.pipeline.name
+    );
+
+    Ok(())
+}
+
 pub async fn load_local_staging_to_postgres(
     file: &str,
     staging_root: Option<PathBuf>,
@@ -538,6 +577,20 @@ fn ensure_cdc_runtime_not_requested(spec: &AstraSpec, command: &str) -> anyhow::
 fn ensure_supported_snapshot_source(spec: &AstraSpec) -> anyhow::Result<()> {
     if spec.source.kind != "postgres" {
         bail!("snapshot staging currently supports source.kind=postgres only");
+    }
+
+    Ok(())
+}
+
+fn ensure_supported_local_snapshot_destination(spec: &AstraSpec) -> anyhow::Result<()> {
+    if spec.destination.kind != "postgres" {
+        bail!(
+            "execute-local-snapshot currently supports destination.kind=postgres only because the end-to-end local loader is the Postgres raw loader"
+        );
+    }
+
+    if spec.destination.staging.is_none() {
+        bail!("execute-local-snapshot requires destination.staging for the local staging handoff");
     }
 
     Ok(())
@@ -885,5 +938,48 @@ runtime: {}
         assert!(options.tables.is_empty());
         assert!(no_tables_remaining(&spec, false, &options));
         assert!(!no_tables_remaining(&spec, true, &options));
+    }
+
+    #[test]
+    fn execute_local_snapshot_rejects_non_postgres_destination() {
+        let spec = AstraSpec::parse_yaml(
+            r#"
+version: v1alpha1
+pipeline:
+  name: postgres-to-snowflake
+  mode: snapshot
+  schedule: manual
+source:
+  kind: postgres
+  connection:
+    host: localhost
+    port: 5432
+    database: app
+    username: app_user
+    passwordRef: env:POSTGRES_PASSWORD
+  capture:
+    tables:
+      - public.users
+    snapshot:
+      mode: full
+      chunkSize: 1000
+destination:
+  kind: snowflake
+  staging:
+    kind: s3
+    bucket: astra-staging
+  write:
+    mode: merge
+runtime: {}
+"#,
+        )
+        .expect("spec parses");
+
+        let error = ensure_supported_local_snapshot_destination(&spec)
+            .expect_err("non-postgres destination should be rejected");
+
+        assert!(error
+            .to_string()
+            .contains("execute-local-snapshot currently supports destination.kind=postgres only"));
     }
 }

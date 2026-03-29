@@ -174,6 +174,18 @@ cargo run -p astra -- snapshot-to-local-staging examples/postgres-to-postgres-ra
 cargo run -p astra -- load-local-staging-to-postgres examples/postgres-to-postgres-raw.astra.yaml
 ```
 
+If you want one boring command that runs that same local happy path end to end, use:
+
+```bash
+export POSTGRES_PASSWORD=...
+export WAREHOUSE_PASSWORD=...
+export ASTRA_STAGING_LOCAL_ROOT=.astra/staging
+export ASTRA_CHECKPOINT_LOCAL_ROOT=.astra/checkpoints
+cargo run -p astra -- execute-local-snapshot examples/postgres-to-postgres-raw.astra.yaml --max-rows-per-table 1000
+```
+
+`execute-local-snapshot` is intentionally narrow and honest: it orchestrates the existing `snapshot-to-local-staging` and `load-local-staging-to-postgres` commands, prints stage-level progress, and currently supports the local Postgres-source to Postgres-destination slice only.
+
 The loader reads staged `JSONL.gz` chunks and lands them in raw Postgres tables (default schema `astra_raw`) with one `jsonb` payload column plus loader metadata. It also records applied chunk object keys so reruns skip already-loaded chunks instead of duplicating them like idiots.
 
 If you want the same flow against a local MinIO bucket instead of the filesystem, bring up the Podman Compose stack and run:
