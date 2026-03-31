@@ -73,6 +73,7 @@ cargo run -p astra-control-plane
 - `cargo run -p astra -- snapshot-to-local-staging examples/postgres-to-warehouse.astra.yaml --max-rows-per-table 1000` — snapshots Postgres tables to local filesystem staging (requires reachable Postgres, set `POSTGRES_PASSWORD`)
 - `cargo run -p astra -- snapshot-to-minio-staging examples/postgres-to-postgres-raw.astra.yaml` — snapshots to MinIO staging (requires reachable Postgres and MinIO)
 - `cargo run -p astra -- load-local-staging-to-postgres examples/postgres-to-postgres-raw.astra.yaml` — loads staged chunks into a raw Postgres destination (requires staged data and reachable destination Postgres)
+- `cargo run -p astra -- execute-local-snapshot examples/postgres-to-postgres-raw.astra.yaml` — end-to-end local snapshot: stages rows to local filesystem, then loads into the Postgres destination in one command (requires reachable source and destination Postgres, set `POSTGRES_PASSWORD`)
 - Control plane pipeline list/apply API at `http://127.0.0.1:8080`
 - Web UI pipeline inventory and YAML editor at `http://127.0.0.1:8080`
 - YAML contract smoke test: `python3 scripts/yaml_contract_smoke.py`
@@ -84,7 +85,6 @@ cargo run -p astra-control-plane
 
 ### Not yet implemented
 - CDC execution (explicitly rejected with a clear error message)
-- Single end-to-end orchestration command (individual steps exist, no unified command yet)
 - Run history / execution status in the web UI
 - Python connector runtime
 - Observability / structured diagnostics
