@@ -85,13 +85,16 @@ cargo run -p astra-control-plane
 
 ### Not yet implemented
 - CDC execution (explicitly rejected with a clear error message)
-- Run history / execution status in the web UI
 - Python connector runtime
 - Observability / structured diagnostics
+- Multi-table parallelism
+- Schema evolution handling
 
 ## Local snapshot quickstart
 
-This is the copy-paste path to validate the current local vertical slice.
+This is the copy-paste path to move rows from a Postgres source to a Postgres destination in a single command.
+
+> **Note:** `execute-local-snapshot` requires `destination.kind: postgres`. Use `examples/smoke-local-snapshot.astra.yaml` for this quickstart — `examples/postgres-to-warehouse.astra.yaml` targets Snowflake and will be rejected.
 
 ### 1. Start local infrastructure
 
@@ -99,61 +102,89 @@ This is the copy-paste path to validate the current local vertical slice.
 podman compose -f deploy/docker-compose/docker-compose.yml up -d
 ```
 
-### 2. Seed fixture data (if needed)
-
-Connect to the local Postgres and create test tables:
+### 2. Seed fixture tables
 
 ```bash
-psql postgres://astra:astra@localhost:5432/astra -c "
-CREATE TABLE IF NOT EXISTS public.orders (
-  id SERIAL PRIMARY KEY,
-  customer TEXT NOT NULL,
-  amount NUMERIC(10,2) NOT NULL,
-  created_at TIMESTAMP DEFAULT now()
+psql postgres://astra:astra@localhost:5432/astra <<'SQL'
+CREATE TABLE IF NOT EXISTS public.smoke_users (
+  id serial PRIMARY KEY, name text NOT NULL, email text NOT NULL
 );
-CREATE TABLE IF NOT EXISTS public.users (
-  id SERIAL PRIMARY KEY,
-  name TEXT NOT NULL,
-  email TEXT NOT NULL,
-  created_at TIMESTAMP DEFAULT now()
+CREATE TABLE IF NOT EXISTS public.smoke_orders (
+  id serial PRIMARY KEY, user_id int NOT NULL,
+  product text NOT NULL, amount_cents int NOT NULL
 );
-INSERT INTO public.orders (customer, amount) VALUES ('alice', 99.99), ('bob', 149.50), ('carol', 75.00);
-INSERT INTO public.users (name, email) VALUES ('alice', 'alice@example.com'), ('bob', 'bob@example.com');
-"
+INSERT INTO public.smoke_users (name, email)
+  SELECT 'User ' || i, 'user' || i || '@smoke.test'
+  FROM generate_series(1, 20) i
+  ON CONFLICT DO NOTHING;
+INSERT INTO public.smoke_orders (user_id, product, amount_cents)
+  SELECT (i % 20) + 1, 'Product ' || i, i * 100
+  FROM generate_series(1, 50) i
+  ON CONFLICT DO NOTHING;
+SQL
 ```
 
-### 3. Validate the spec
+### 3. Run the end-to-end snapshot
 
 ```bash
-cargo run -p astra -- validate examples/postgres-to-warehouse.astra.yaml
+ASTRA_SMOKE_PG_PASSWORD=astra \
+cargo run -p astra -- execute-local-snapshot examples/smoke-local-snapshot.astra.yaml
 ```
 
-Expected output includes: `valid Astra spec: postgres-analytics`
+Expected output:
+```
+local snapshot execution: smoke-local-snapshot
+stage 1/2: snapshot -> local staging
+  ...staged chunks for smoke_users and smoke_orders...
+stage 2/2: local staging -> postgres destination
+  ...loaded rows into astra_raw...
+done.
+```
 
-### 4. Discover the source
+### 4. Verify destination row counts
 
 ```bash
-export POSTGRES_PASSWORD=astra
-cargo run -p astra -- discover-source examples/postgres-to-warehouse.astra.yaml
+psql postgres://astra:astra@localhost:5432/astra \
+  -c "SELECT COUNT(*) FROM astra_raw.raw_public_smoke_users;"
+# Expected: 20
+
+psql postgres://astra:astra@localhost:5432/astra \
+  -c "SELECT COUNT(*) FROM astra_raw.raw_public_smoke_orders;"
+# Expected: 50
 ```
 
-Expected output includes discovered tables and a snapshot skeleton.
+### 5. Optional: surface runs in the web UI
 
-### 5. Snapshot to local staging
+To record the run in the control plane and see per-table progress in the web UI:
 
 ```bash
-export POSTGRES_PASSWORD=astra
-export ASTRA_STAGING_LOCAL_ROOT=.astra/staging
-cargo run -p astra -- snapshot-to-local-staging examples/postgres-to-warehouse.astra.yaml --max-rows-per-table 1000
+# Terminal 1 — control plane
+cargo run -p astra-control-plane
+
+# Terminal 2 — apply the spec (one-time)
+curl -s -X POST http://127.0.0.1:8080/api/v1/specs/apply \
+  -H 'content-type: application/json' \
+  -d "$(jq -Rs '{yaml: ., created_by: "cli"}' < examples/smoke-local-snapshot.astra.yaml)"
+
+# Terminal 2 — run with control plane reporting
+ASTRA_SMOKE_PG_PASSWORD=astra \
+cargo run -p astra -- execute-local-snapshot examples/smoke-local-snapshot.astra.yaml \
+  --control-plane-url http://127.0.0.1:8080
 ```
 
-Expected output includes staged chunk paths under `.astra/staging/`.
+Open `http://127.0.0.1:8080`, go to **Job status**, click **View runs** on `smoke-local-snapshot`, then **Tables** to see per-table row counts and status.
 
 ### 6. Tear down
 
 ```bash
 podman compose -f deploy/docker-compose/docker-compose.yml down
-rm -rf .astra/staging
+rm -rf .astra/staging .astra/checkpoints
+```
+
+Alternatively, the full automated smoke test (seeds, executes, verifies idempotency, and cleans up) can be run directly:
+
+```bash
+python3 scripts/e2e_snapshot_smoke.py
 ```
 
 ## Definition of done
