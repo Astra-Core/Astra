@@ -14,6 +14,29 @@ type PipelinesResponse = {
   pipelines: Pipeline[];
 };
 
+type PipelineRun = {
+  id: string;
+  pipeline_name: string;
+  trigger_mode: string;
+  status: string;
+  worker_id: string | null;
+  started_at: string;
+  finished_at: string | null;
+  created_at: string;
+  updated_at: string;
+  stats_json: Record<string, unknown> | null;
+};
+
+type PipelineRunsResponse = {
+  runs: PipelineRun[];
+};
+
+type RunHistoryState = {
+  loading: boolean;
+  error: string | null;
+  runs: PipelineRun[];
+};
+
 type ApplySpecResponse = {
   pipeline_name: string;
   spec_version: number;
@@ -49,6 +72,31 @@ const ONBOARDING_STEPS = [
 
 const DEFAULT_AUTHOR = 'web-ui';
 
+function runStatusClass(status: string): string {
+  const s = status.toLowerCase();
+  if (s === 'succeeded') return 'status-pill--success';
+  if (s === 'failed' || s === 'error') return 'status-pill--error';
+  if (s === 'running') return 'status-pill--running';
+  return 'status-pill--muted';
+}
+
+function formatDuration(startedAt: string, finishedAt: string | null): string {
+  if (!finishedAt) return '—';
+  const ms = new Date(finishedAt).getTime() - new Date(startedAt).getTime();
+  if (ms < 1000) return `${ms}ms`;
+  if (ms < 60_000) return `${Math.round(ms / 1000)}s`;
+  return `${Math.round(ms / 60_000)}m`;
+}
+
+function formatTimestamp(ts: string): string {
+  return new Date(ts).toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
+}
+
 export function App() {
   const [activeView, setActiveView] = useState<ViewKey>('overview');
   const [pipelines, setPipelines] = useState<Pipeline[]>([]);
@@ -58,6 +106,8 @@ export function App() {
   const [yamlStatus, setYamlStatus] = useState<string>('Loading canonical example…');
   const [applyStatus, setApplyStatus] = useState<string>('');
   const [refreshToken, setRefreshToken] = useState(0);
+  const [expandedPipelines, setExpandedPipelines] = useState<Set<string>>(new Set());
+  const [runHistories, setRunHistories] = useState<Record<string, RunHistoryState>>({});
 
   useEffect(() => {
     let cancelled = false;
@@ -131,6 +181,47 @@ export function App() {
     const activeCount = pipelines.filter((pipeline) => pipeline.status.toLowerCase() === 'active').length;
     return `${pipelines.length} pipeline${pipelines.length === 1 ? '' : 's'} tracked, ${activeCount} active.`;
   }, [pipelines]);
+
+  async function fetchRunHistory(pipelineName: string) {
+    setRunHistories((prev) => ({
+      ...prev,
+      [pipelineName]: { loading: true, error: null, runs: prev[pipelineName]?.runs ?? [] }
+    }));
+
+    try {
+      const response = await fetch(`/api/v1/pipelines/${encodeURIComponent(pipelineName)}/run-history`);
+      if (!response.ok) {
+        throw new Error(`Run history request failed: ${response.status}`);
+      }
+      const data = (await response.json()) as PipelineRunsResponse;
+      setRunHistories((prev) => ({
+        ...prev,
+        [pipelineName]: { loading: false, error: null, runs: data.runs }
+      }));
+    } catch (error) {
+      setRunHistories((prev) => ({
+        ...prev,
+        [pipelineName]: {
+          loading: false,
+          error: error instanceof Error ? error.message : 'Failed to load run history.',
+          runs: []
+        }
+      }));
+    }
+  }
+
+  function handleToggleRuns(pipelineName: string) {
+    setExpandedPipelines((prev) => {
+      const next = new Set(prev);
+      if (next.has(pipelineName)) {
+        next.delete(pipelineName);
+      } else {
+        next.add(pipelineName);
+        void fetchRunHistory(pipelineName);
+      }
+      return next;
+    });
+  }
 
   async function handleApplyYaml() {
     setApplyStatus('Applying YAML spec…');
@@ -276,20 +367,68 @@ export function App() {
               <p className="muted">No pipelines yet. Apply a YAML spec and this stops looking abandoned.</p>
             ) : (
               <div className="list">
-                {pipelines.map((pipeline) => (
-                  <article key={`${pipeline.name}-${pipeline.spec_version}`} className="list-row">
-                    <div>
-                      <h3>{pipeline.name}</h3>
-                      <p className="muted">
-                        {pipeline.source_kind} → {pipeline.destination_kind}
-                      </p>
-                    </div>
-                    <div className="list-row__meta">
-                      <span className="status-pill">{pipeline.status}</span>
-                      <span className="muted">v{pipeline.spec_version}</span>
-                    </div>
-                  </article>
-                ))}
+                {pipelines.map((pipeline) => {
+                  const isExpanded = expandedPipelines.has(pipeline.name);
+                  const history = runHistories[pipeline.name];
+
+                  return (
+                    <article key={`${pipeline.name}-${pipeline.spec_version}`} className="list-row">
+                      <div className="list-row__header">
+                        <div>
+                          <h3>{pipeline.name}</h3>
+                          <p className="muted">
+                            {pipeline.source_kind} → {pipeline.destination_kind}
+                          </p>
+                        </div>
+                        <div className="list-row__meta">
+                          <span className="status-pill">{pipeline.status}</span>
+                          <span className="muted">v{pipeline.spec_version}</span>
+                          <button
+                            type="button"
+                            className="secondary-button run-toggle-btn"
+                            onClick={() => handleToggleRuns(pipeline.name)}
+                            aria-expanded={isExpanded}
+                          >
+                            {isExpanded ? 'Hide runs' : 'View runs'}
+                          </button>
+                        </div>
+                      </div>
+
+                      {isExpanded && (
+                        <div className="run-history">
+                          {!history || history.loading ? (
+                            <p className="muted run-history__status">Loading run history…</p>
+                          ) : history.error ? (
+                            <p className="error-text run-history__status">{history.error}</p>
+                          ) : history.runs.length === 0 ? (
+                            <p className="muted run-history__status">No runs yet for this pipeline.</p>
+                          ) : (
+                            <div className="run-history__list">
+                              <div className="run-history__header-row">
+                                <span>Run ID</span>
+                                <span>Status</span>
+                                <span>Trigger</span>
+                                <span>Started</span>
+                                <span>Duration</span>
+                              </div>
+                              {history.runs.map((run) => (
+                                <div key={run.id} className="run-history__row">
+                                  <span className="run-history__id">{run.id.slice(0, 8)}</span>
+                                  <span>
+                                    <span className={`status-pill ${runStatusClass(run.status)}`}>{run.status}</span>
+                                  </span>
+                                  <span className="muted">{run.trigger_mode}</span>
+                                  <span className="muted">{formatTimestamp(run.started_at)}</span>
+                                  <span className="muted">{formatDuration(run.started_at, run.finished_at)}</span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </article>
+                  );
+                })}
               </div>
             )}
           </section>
