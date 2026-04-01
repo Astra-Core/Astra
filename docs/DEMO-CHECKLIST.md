@@ -12,10 +12,10 @@ Verify end-to-end flow: bootstrap → spec → run → UI/API verification.
 
 ## 2. Quickstart Snapshot Flow (CLI)
 
-- [ ] `cargo run -p astra -- snapshot-to-local-staging examples/postgres-to-warehouse.astra.yaml --max-rows-per-table 1000`
-- [ ] Verify staging: `ls -la .astra/staging/` (JSONL.gz chunks)
-- [ ] `cargo run -p astra -- load-local-staging-to-postgres examples/postgres-to-postgres-raw.astra.yaml`
-- [ ] Verify loaded: Query raw tables in warehouse Postgres (`astra_raw` schema)
+- [ ] Seed fixture tables (see CONTRIBUTING.md quickstart for SQL)
+- [ ] `ASTRA_SMOKE_PG_PASSWORD=astra cargo run -p astra -- execute-local-snapshot examples/smoke-local-snapshot.astra.yaml --control-plane-url http://127.0.0.1:8080`
+- [ ] Verify destination row counts: `psql postgres://astra:astra@localhost:5432/astra -c "SELECT COUNT(*) FROM astra_raw.raw_public_smoke_users;"` (expect 20)
+- [ ] Verify destination row counts: `psql postgres://astra:astra@localhost:5432/astra -c "SELECT COUNT(*) FROM astra_raw.raw_public_smoke_orders;"` (expect 50)
 
 ## 3. Control Plane + UI
 
@@ -27,13 +27,15 @@ Verify end-to-end flow: bootstrap → spec → run → UI/API verification.
 
 ## 4. API Verification
 
-- [ ] `curl http://127.0.0.1:8080/api/pipelines` (list)
-- [ ] `curl http://127.0.0.1:8080/api/pipelines/{id}/runs` (history)
-- [ ] Latest run shows snapshot progress/stages
+- [ ] `curl http://127.0.0.1:8080/api/v1/pipelines` (list pipelines)
+- [ ] `curl http://127.0.0.1:8080/api/v1/pipelines/smoke-local-snapshot/run-history` (run history)
+- [ ] `curl http://127.0.0.1:8080/api/v1/pipeline-runs/<run-id>/table-executions` (per-table status and row counts)
 
 ## Known Limitations (v0.1)
 
-- CDC not executable (source skeleton only)
-- No worker orchestration (manual CLI runs)
-- Local staging only (MinIO adapter available but unproven)
-- UI is foundation (job history WIP)
+- CDC not executable — returns an explicit error if attempted
+- No worker orchestration — pipelines are triggered manually via CLI
+- Append-only destination writes — no merge or upsert semantics
+- `execute-local-snapshot` requires `destination.kind: postgres`
+
+See [docs/v0.1-SCOPE.md](./v0.1-SCOPE.md) for the full limitations list.
