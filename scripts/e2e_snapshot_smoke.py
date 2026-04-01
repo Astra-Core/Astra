@@ -53,11 +53,50 @@ def _psql_dsn():
 
 
 def detect_container_runtime():
-    for runtime in ("podman", "docker"):
+    """Detect which container runtime to use for talking to astra-postgres.
+
+    Preference order:
+      1. ASTRA_SMOKE_RUNTIME env var (docker|podman), if set and on PATH.
+      2. First runtime on PATH that can actually inspect the astra-postgres container.
+      3. Fallback to first runtime found on PATH (original behaviour).
+    """
+    valid_runtimes = ("podman", "docker")
+    override = os.environ.get("ASTRA_SMOKE_RUNTIME")
+
+    if override:
+        if override not in valid_runtimes:
+            raise SmokeFailure(
+                f"ASTRA_SMOKE_RUNTIME={override!r} is invalid; expected one of {valid_runtimes!r}"
+            )
+        if not shutil.which(override):
+            raise SmokeFailure(
+                f"ASTRA_SMOKE_RUNTIME={override!r} is set but '{override}' was not found on PATH"
+            )
+        return override
+
+    # Prefer a runtime that can actually see the astra-postgres container.
+    for runtime in valid_runtimes:
+        if not shutil.which(runtime):
+            continue
+        try:
+            result = subprocess.run(
+                [runtime, "inspect", CONTAINER_NAME],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except OSError:
+            continue
+        if result.returncode == 0:
+            return runtime
+
+    # Fallback: first runtime on PATH.
+    for runtime in valid_runtimes:
         if shutil.which(runtime):
             return runtime
+
     raise SmokeFailure(
-        "neither 'podman' nor 'docker' found on PATH — cannot exec psql in the compose container"
+        "neither 'podman' nor 'docker' found on PATH — cannot exec psql in the compose container; "
+        "set ASTRA_SMOKE_RUNTIME=docker|podman to override"
     )
 
 
@@ -182,11 +221,8 @@ def run_execute_local_snapshot(staging_root, checkpoint_root, *, no_resume=False
         cmd.append("--no-resume")
 
     print(f"\n$ {' '.join(cmd)}")
-    result = subprocess.run(cmd, cwd=ROOT, env=env, capture_output=True, text=True)
-    if result.stdout:
-        print(result.stdout, end="")
-    if result.stderr:
-        print(result.stderr, end="", file=sys.stderr)
+    # Stream output directly so CI does not time out waiting for a silent cargo build.
+    result = subprocess.run(cmd, cwd=ROOT, env=env)
     if result.returncode != 0:
         raise SmokeFailure(f"execute-local-snapshot failed (exit {result.returncode})")
 
