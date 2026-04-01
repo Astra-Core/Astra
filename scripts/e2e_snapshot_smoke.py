@@ -45,7 +45,10 @@ class SmokeFailure(RuntimeError):
 
 
 def is_ci():
-    return os.environ.get("CI") == "true"
+    value = os.environ.get("CI")
+    if value is None:
+        return False
+    return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _psql_dsn():
@@ -118,7 +121,15 @@ def _psql_run(sql, *, tuples_only=False, check=True):
         if result.stderr:
             print(result.stderr, end="", file=sys.stderr)
     if check and result.returncode != 0:
-        raise SmokeFailure(f"psql failed (exit {result.returncode}): {sql!r}")
+        max_len = 2000
+        parts = [f"psql failed (exit {result.returncode}): {sql!r}"]
+        stderr = (result.stderr or "").strip()
+        stdout = (result.stdout or "").strip()
+        if stderr:
+            parts.append(f"stderr:\n{stderr[:max_len]}")
+        if stdout:
+            parts.append(f"stdout:\n{stdout[:max_len]}")
+        raise SmokeFailure("\n".join(parts))
     return result
 
 
@@ -152,9 +163,10 @@ def check_postgres():
             raise SmokeFailure(
                 f"Postgres container '{CONTAINER_NAME}' is not running.\n"
                 "Start it with:\n"
-                "  podman compose -f deploy/docker-compose/docker-compose.yml up -d"
+                "  podman compose -f deploy/docker-compose/docker-compose.yml up -d\n"
+                "  # or: docker compose -f deploy/docker-compose/docker-compose.yml up -d"
             )
-        print(f"  container '{CONTAINER_NAME}' is running")
+        print(f"  container '{CONTAINER_NAME}' is running (via {runtime})")
 
 
 def seed_source_fixtures():
