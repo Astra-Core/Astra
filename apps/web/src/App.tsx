@@ -44,6 +44,29 @@ type ApplySpecResponse = {
   message: string;
 };
 
+type TableExecution = {
+  id: string;
+  stream_name: string;
+  status: string;
+  rows_processed: number;
+  rows_total: number | null;
+  error_summary: string | null;
+  checkpoint_completed: boolean;
+  started_at: string;
+  finished_at: string | null;
+  updated_at: string;
+};
+
+type TableExecutionsResponse = {
+  tables: TableExecution[];
+};
+
+type TableExecutionState = {
+  loading: boolean;
+  error: string | null;
+  tables: TableExecution[];
+};
+
 const NAV_ITEMS: Array<{ key: ViewKey; label: string; eyebrow: string }> = [
   { key: 'overview', label: 'Overview', eyebrow: 'Control plane' },
   { key: 'onboarding', label: 'Onboarding', eyebrow: 'Source → destination' },
@@ -80,6 +103,21 @@ function runStatusClass(status: string): string {
   return 'status-pill--muted';
 }
 
+function tableStatusClass(status: string): string {
+  const s = status.toLowerCase();
+  if (s === 'applied') return 'status-pill--success';
+  if (s === 'failed') return 'status-pill--error';
+  if (s === 'snapshot') return 'status-pill--running';
+  return 'status-pill--muted'; // staged, queued, etc.
+}
+
+function formatRowProgress(rowsProcessed: number, rowsTotal: number | null): string {
+  if (rowsTotal != null) {
+    return `${rowsProcessed.toLocaleString()} / ${rowsTotal.toLocaleString()} rows`;
+  }
+  return `${rowsProcessed.toLocaleString()} rows`;
+}
+
 function formatDuration(startedAt: string, finishedAt: string | null): string {
   if (!finishedAt) return '—';
   const ms = new Date(finishedAt).getTime() - new Date(startedAt).getTime();
@@ -108,6 +146,8 @@ export function App() {
   const [refreshToken, setRefreshToken] = useState(0);
   const [expandedPipelines, setExpandedPipelines] = useState<Set<string>>(new Set());
   const [runHistories, setRunHistories] = useState<Record<string, RunHistoryState>>({});
+  const [expandedRuns, setExpandedRuns] = useState<Set<string>>(new Set());
+  const [tableExecutions, setTableExecutions] = useState<Record<string, TableExecutionState>>({});
 
   useEffect(() => {
     let cancelled = false;
@@ -208,6 +248,46 @@ export function App() {
         }
       }));
     }
+  }
+
+  async function fetchTableExecutions(runId: string) {
+    setTableExecutions((prev) => ({
+      ...prev,
+      [runId]: { loading: true, error: null, tables: prev[runId]?.tables ?? [] }
+    }));
+    try {
+      const response = await fetch(`/api/v1/pipeline-runs/${encodeURIComponent(runId)}/table-executions`);
+      if (!response.ok) {
+        throw new Error(`Table executions request failed: ${response.status}`);
+      }
+      const data = (await response.json()) as TableExecutionsResponse;
+      setTableExecutions((prev) => ({
+        ...prev,
+        [runId]: { loading: false, error: null, tables: data.tables }
+      }));
+    } catch (error) {
+      setTableExecutions((prev) => ({
+        ...prev,
+        [runId]: {
+          loading: false,
+          error: error instanceof Error ? error.message : 'Failed to load table executions.',
+          tables: []
+        }
+      }));
+    }
+  }
+
+  function handleToggleTables(runId: string) {
+    setExpandedRuns((prev) => {
+      const next = new Set(prev);
+      if (next.has(runId)) {
+        next.delete(runId);
+      } else {
+        next.add(runId);
+        void fetchTableExecutions(runId);
+      }
+      return next;
+    });
   }
 
   function handleToggleRuns(pipelineName: string) {
@@ -410,18 +490,75 @@ export function App() {
                                 <span>Trigger</span>
                                 <span>Started</span>
                                 <span>Duration</span>
+                                <span></span>
                               </div>
-                              {history.runs.map((run) => (
-                                <div key={run.id} className="run-history__row">
-                                  <span className="run-history__id">{run.id.slice(0, 8)}</span>
-                                  <span>
-                                    <span className={`status-pill ${runStatusClass(run.status)}`}>{run.status}</span>
-                                  </span>
-                                  <span className="muted">{run.trigger_mode}</span>
-                                  <span className="muted">{formatTimestamp(run.started_at)}</span>
-                                  <span className="muted">{formatDuration(run.started_at, run.finished_at)}</span>
-                                </div>
-                              ))}
+                              {history.runs.map((run) => {
+                                const isRunExpanded = expandedRuns.has(run.id);
+                                const tableState = tableExecutions[run.id];
+                                return (
+                                  <div key={run.id} className="run-history__item">
+                                    <div className="run-history__row">
+                                      <span className="run-history__id">{run.id.slice(0, 8)}</span>
+                                      <span>
+                                        <span className={`status-pill ${runStatusClass(run.status)}`}>{run.status}</span>
+                                      </span>
+                                      <span className="muted">{run.trigger_mode}</span>
+                                      <span className="muted">{formatTimestamp(run.started_at)}</span>
+                                      <span className="muted">{formatDuration(run.started_at, run.finished_at)}</span>
+                                      <span>
+                                        <button
+                                          type="button"
+                                          className="secondary-button table-toggle-btn"
+                                          onClick={() => handleToggleTables(run.id)}
+                                          aria-expanded={isRunExpanded}
+                                        >
+                                          {isRunExpanded ? 'Hide tables' : 'Tables'}
+                                        </button>
+                                      </span>
+                                    </div>
+
+                                    {isRunExpanded && (
+                                      <div className="table-executions">
+                                        {!tableState || tableState.loading ? (
+                                          <p className="muted table-executions__status">Loading table executions…</p>
+                                        ) : tableState.error ? (
+                                          <p className="error-text table-executions__status">{tableState.error}</p>
+                                        ) : tableState.tables.length === 0 ? (
+                                          <p className="muted table-executions__status">No table executions recorded for this run.</p>
+                                        ) : (
+                                          <div className="table-executions__list">
+                                            <div className="table-executions__header-row">
+                                              <span>Stream</span>
+                                              <span>Status</span>
+                                              <span>Progress</span>
+                                              <span>Error</span>
+                                            </div>
+                                            {tableState.tables.map((table) => (
+                                              <div key={table.id} className="table-executions__row">
+                                                <span className="table-executions__name">{table.stream_name}</span>
+                                                <span>
+                                                  <span className={`status-pill ${tableStatusClass(table.status)}`}>
+                                                    {table.status}
+                                                  </span>
+                                                </span>
+                                                <span className="muted">
+                                                  {formatRowProgress(table.rows_processed, table.rows_total)}
+                                                </span>
+                                                <span
+                                                  className={table.error_summary ? 'table-executions__error' : 'muted'}
+                                                  title={table.error_summary ?? undefined}
+                                                >
+                                                  {table.error_summary ?? '—'}
+                                                </span>
+                                              </div>
+                                            ))}
+                                          </div>
+                                        )}
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })}
                             </div>
                           )}
                         </div>
