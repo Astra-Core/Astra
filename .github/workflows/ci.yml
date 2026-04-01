@@ -75,5 +75,9 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install stable Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+      - name: Install PostgreSQL client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
       - name: Run E2E snapshot smoke
         run: python3 scripts/e2e_snapshot_smoke.py
