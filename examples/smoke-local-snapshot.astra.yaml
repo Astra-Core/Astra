@@ -1,0 +1,46 @@
+version: v1alpha1
+pipeline:
+  name: smoke-local-snapshot
+  mode: snapshot
+  schedule: manual
+source:
+  kind: postgres
+  connection:
+    host: localhost
+    port: 5432
+    database: astra
+    username: astra
+    passwordRef: env:ASTRA_SMOKE_PG_PASSWORD
+  capture:
+    tables:
+      - public.smoke_users
+      - public.smoke_orders
+    snapshot:
+      mode: full
+      chunkSize: 1000
+destination:
+  kind: postgres
+  connection:
+    host: localhost
+    port: 5432
+    database: astra
+    username: astra
+    passwordRef: env:ASTRA_SMOKE_PG_PASSWORD
+    schema: astra_raw
+    tablePrefix: raw_
+    applicationName: astra-smoke-loader
+  staging:
+    kind: local
+    bucket: astra-smoke-staging
+    prefix: smoke-local-snapshot/
+  write:
+    mode: append
+    batchSize: 10000
+runtime:
+  parallelism:
+    tables: 1
+  checkpointing:
+    intervalSeconds: 30
+  schemaEvolution:
+    additiveChanges: auto-apply
+    breakingChanges: pause
