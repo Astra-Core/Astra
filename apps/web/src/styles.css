@@ -307,7 +307,7 @@ button:active {
 .run-history__header-row,
 .run-history__row {
   display: grid;
-  grid-template-columns: 6rem 1fr 1fr 1fr 1fr;
+  grid-template-columns: 6rem 1fr 1fr 1fr 1fr auto;
   gap: 0.5rem;
   align-items: center;
   padding: 0.45rem 0;
@@ -325,7 +325,7 @@ button:active {
   margin-bottom: 0.1rem;
 }
 
-.run-history__row + .run-history__row {
+.run-history__item + .run-history__item {
   border-top: 1px solid rgba(128, 146, 219, 0.08);
 }
 
@@ -333,6 +333,70 @@ button:active {
   font-family: ui-monospace, 'Cascadia Code', 'Source Code Pro', Menlo, monospace;
   font-size: 0.78rem;
   color: #b8c4f4;
+}
+
+.table-toggle-btn {
+  font-size: 0.72rem;
+  padding: 0.3rem 0.6rem;
+  white-space: nowrap;
+}
+
+.table-executions {
+  border-top: 1px solid rgba(128, 146, 219, 0.1);
+  margin: 0 0.25rem 0.5rem;
+  padding: 0.75rem 0.5rem 0.25rem;
+  background: rgba(8, 14, 28, 0.4);
+  border-radius: 0 0 12px 12px;
+}
+
+.table-executions__status {
+  margin: 0;
+  font-size: 0.85rem;
+}
+
+.table-executions__list {
+  display: grid;
+  gap: 0;
+}
+
+.table-executions__header-row,
+.table-executions__row {
+  display: grid;
+  grid-template-columns: 2fr auto 9rem 2fr;
+  gap: 0.5rem;
+  align-items: center;
+  padding: 0.4rem 0.25rem;
+  font-size: 0.82rem;
+}
+
+.table-executions__header-row {
+  color: #8ea2ff;
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  border-bottom: 1px solid rgba(128, 146, 219, 0.12);
+  padding-bottom: 0.5rem;
+  margin-bottom: 0.1rem;
+}
+
+.table-executions__row + .table-executions__row {
+  border-top: 1px solid rgba(128, 146, 219, 0.06);
+}
+
+.table-executions__name {
+  font-family: ui-monospace, 'Cascadia Code', 'Source Code Pro', Menlo, monospace;
+  font-size: 0.78rem;
+  color: #b8c4f4;
+}
+
+.table-executions__error {
+  font-size: 0.78rem;
+  color: #ffb4b4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: default;
 }
 
 @media (max-width: 960px) {
@@ -361,11 +425,25 @@ button:active {
 
   .run-history__header-row,
   .run-history__row {
-    grid-template-columns: 5rem 1fr 1fr;
+    grid-template-columns: 5rem 1fr auto;
   }
 
   .run-history__header-row span:nth-child(n+4),
   .run-history__row span:nth-child(n+4) {
+    display: none;
+  }
+
+  .run-history__row span:last-child {
+    display: flex;
+  }
+
+  .table-executions__header-row,
+  .table-executions__row {
+    grid-template-columns: 1fr auto 1fr;
+  }
+
+  .table-executions__header-row span:last-child,
+  .table-executions__row span:last-child {
     display: none;
   }
 }
