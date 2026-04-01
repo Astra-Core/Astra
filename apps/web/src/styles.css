@@ -399,6 +399,155 @@ button:active {
   cursor: default;
 }
 
+/* Wizard step indicator */
+.wizard-steps {
+  display: flex;
+  border: 1px solid rgba(128, 146, 219, 0.18);
+  border-radius: 14px;
+  overflow: hidden;
+}
+
+.wizard-step {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1.25rem;
+  flex: 1;
+  font-size: 0.85rem;
+  color: #8ea2ff;
+  border-right: 1px solid rgba(128, 146, 219, 0.15);
+  background: rgba(8, 14, 28, 0.5);
+}
+
+.wizard-step:last-child {
+  border-right: 0;
+}
+
+.wizard-step--active {
+  background: rgba(91, 124, 255, 0.1);
+  color: #d9e1ff;
+}
+
+.wizard-step--done {
+  color: #9bf0c5;
+}
+
+.wizard-step__num {
+  width: 1.5rem;
+  height: 1.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  background: rgba(128, 146, 219, 0.18);
+  flex-shrink: 0;
+}
+
+.wizard-step--active .wizard-step__num {
+  background: rgba(91, 124, 255, 0.35);
+}
+
+.wizard-step--done .wizard-step__num {
+  background: rgba(56, 201, 133, 0.2);
+}
+
+/* Forms */
+.form-section-heading {
+  margin: 0 0 0.25rem;
+  font-size: 1rem;
+}
+
+.form-group {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.form-group--narrow {
+  max-width: 7rem;
+}
+
+.form-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 1rem;
+  align-items: end;
+}
+
+.form-input {
+  background: rgba(6, 11, 24, 0.96);
+  border: 1px solid rgba(128, 146, 219, 0.22);
+  border-radius: 10px;
+  color: #eef2ff;
+  padding: 0.65rem 0.85rem;
+  width: 100%;
+  transition: border-color 120ms ease;
+}
+
+.form-input:focus {
+  outline: none;
+  border-color: rgba(91, 124, 255, 0.55);
+}
+
+.form-input::placeholder {
+  color: #5a6a9a;
+}
+
+.form-input--textarea {
+  min-height: 5rem;
+  resize: vertical;
+  font-family: ui-monospace, 'Cascadia Code', 'Source Code Pro', Menlo, monospace;
+  font-size: 0.85rem;
+}
+
+.form-input-prefix-wrap {
+  display: flex;
+  align-items: center;
+  background: rgba(6, 11, 24, 0.96);
+  border: 1px solid rgba(128, 146, 219, 0.22);
+  border-radius: 10px;
+  overflow: hidden;
+  transition: border-color 120ms ease;
+}
+
+.form-input-prefix-wrap:focus-within {
+  border-color: rgba(91, 124, 255, 0.55);
+}
+
+.form-input-prefix {
+  padding: 0.65rem 0.6rem 0.65rem 0.85rem;
+  color: #8ea2ff;
+  font-family: ui-monospace, 'Cascadia Code', 'Source Code Pro', Menlo, monospace;
+  font-size: 0.85rem;
+  flex-shrink: 0;
+  border-right: 1px solid rgba(128, 146, 219, 0.15);
+}
+
+.form-input--prefixed {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.form-input--prefixed:focus {
+  outline: none;
+}
+
+.wizard-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  padding-top: 0.25rem;
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  transform: none;
+}
+
 @media (max-width: 960px) {
   .shell {
     grid-template-columns: 1fr;
@@ -412,6 +561,32 @@ button:active {
   .panel-grid,
   .step-grid {
     grid-template-columns: 1fr;
+  }
+
+  .wizard-steps {
+    flex-direction: column;
+  }
+
+  .wizard-step {
+    border-right: 0;
+    border-bottom: 1px solid rgba(128, 146, 219, 0.15);
+  }
+
+  .wizard-step:last-child {
+    border-bottom: 0;
+  }
+
+  .form-row {
+    grid-template-columns: 1fr;
+  }
+
+  .form-group--narrow {
+    max-width: none;
+  }
+
+  .wizard-actions {
+    flex-direction: column;
+    align-items: stretch;
   }
 
   .hero,

@@ -67,6 +67,34 @@ type TableExecutionState = {
   tables: TableExecution[];
 };
 
+type WizardStep = 1 | 2 | 3 | 4;
+
+type WizardSource = {
+  host: string;
+  port: string;
+  database: string;
+  username: string;
+  passwordRef: string;
+  tables: string;
+};
+
+type WizardDestination = {
+  host: string;
+  port: string;
+  database: string;
+  username: string;
+  passwordRef: string;
+};
+
+type WizardState = {
+  step: WizardStep;
+  pipelineName: string;
+  source: WizardSource;
+  destination: WizardDestination;
+  applyStatus: string;
+  applying: boolean;
+};
+
 const NAV_ITEMS: Array<{ key: ViewKey; label: string; eyebrow: string }> = [
   { key: 'overview', label: 'Overview', eyebrow: 'Control plane' },
   { key: 'onboarding', label: 'Onboarding', eyebrow: 'Source → destination' },
@@ -74,24 +102,57 @@ const NAV_ITEMS: Array<{ key: ViewKey; label: string; eyebrow: string }> = [
   { key: 'yaml', label: 'YAML studio', eyebrow: 'Declarative workflows' }
 ];
 
-const ONBOARDING_STEPS = [
-  {
-    title: 'Connect a source',
-    detail: 'Postgres is the first serious citizen. More connectors can stop pretending later.'
-  },
-  {
-    title: 'Pick a destination',
-    detail: 'Model the destination in YAML now so the UI never drifts off into fantasy product land.'
-  },
-  {
-    title: 'Review the generated spec',
-    detail: 'Operators can validate what Astra plans to do before a pipeline gets near production.'
-  },
-  {
-    title: 'Apply and observe',
-    detail: 'Persist the spec, start the run, and surface status without making people spelunk through logs.'
-  }
-];
+const DEFAULT_WIZARD: WizardState = {
+  step: 1,
+  pipelineName: '',
+  source: { host: 'localhost', port: '5432', database: '', username: '', passwordRef: 'POSTGRES_PASSWORD', tables: 'public.users' },
+  destination: { host: 'localhost', port: '5432', database: '', username: '', passwordRef: 'DEST_POSTGRES_PASSWORD' },
+  applyStatus: '',
+  applying: false,
+};
+
+function generateWizardYaml(w: WizardState): string {
+  const tables = w.source.tables
+    .split(/[\n,]/)
+    .map((t) => t.trim())
+    .filter(Boolean);
+  const tableLines = tables.map((t) => `      - ${t}`).join('\n');
+  return `version: v1alpha1
+pipeline:
+  name: ${w.pipelineName || 'my-pipeline'}
+  mode: snapshot
+source:
+  kind: postgres
+  connection:
+    host: ${w.source.host}
+    port: ${w.source.port}
+    database: ${w.source.database}
+    username: ${w.source.username}
+    passwordRef: env:${w.source.passwordRef}
+  capture:
+    tables:
+${tableLines}
+    snapshot:
+      mode: incremental
+      chunkSize: 50000
+destination:
+  kind: postgres
+  connection:
+    host: ${w.destination.host}
+    port: ${w.destination.port}
+    database: ${w.destination.database}
+    username: ${w.destination.username}
+    passwordRef: env:${w.destination.passwordRef}
+  write:
+    mode: append
+    batchSize: 10000
+runtime:
+  parallelism:
+    tables: 1
+  checkpointing:
+    intervalSeconds: 30
+`;
+}
 
 const DEFAULT_AUTHOR = 'web-ui';
 
@@ -148,6 +209,7 @@ export function App() {
   const [runHistories, setRunHistories] = useState<Record<string, RunHistoryState>>({});
   const [expandedRuns, setExpandedRuns] = useState<Set<string>>(new Set());
   const [tableExecutions, setTableExecutions] = useState<Record<string, TableExecutionState>>({});
+  const [wizard, setWizard] = useState<WizardState>(DEFAULT_WIZARD);
 
   useEffect(() => {
     let cancelled = false;
@@ -332,6 +394,32 @@ export function App() {
     }
   }
 
+  async function handleWizardApply() {
+    setWizard((prev) => ({ ...prev, applying: true, applyStatus: 'Applying spec…' }));
+    try {
+      const specYaml = generateWizardYaml(wizard);
+      const response = await fetch('/api/v1/specs/apply', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ yaml: specYaml, created_by: DEFAULT_AUTHOR }),
+      });
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(errorText || `Apply failed with status ${response.status}`);
+      }
+      await response.json();
+      setWizard(DEFAULT_WIZARD);
+      setRefreshToken((current) => current + 1);
+      setActiveView('jobs');
+    } catch (error) {
+      setWizard((prev) => ({
+        ...prev,
+        applying: false,
+        applyStatus: error instanceof Error ? `Error: ${error.message}` : 'Failed to apply spec.',
+      }));
+    }
+  }
+
   return (
     <div className="shell">
       <aside className="sidebar">
@@ -407,23 +495,221 @@ export function App() {
         {activeView === 'onboarding' && (
           <section className="card section-stack">
             <div>
-              <p className="eyebrow">Onboarding surface</p>
-              <h2>Stub the flow, keep it useful</h2>
-              <p className="section-copy">
-                This preserves the original onboarding intent while setting up the app structure for real forms and API
-                mutations later.
-              </p>
+              <p className="eyebrow">Source → destination</p>
+              <h2>Set up a new pipeline</h2>
+              <p className="section-copy">Configure your source and destination. Astra generates the spec — you review and apply it.</p>
             </div>
 
-            <div className="step-grid">
-              {ONBOARDING_STEPS.map((step, index) => (
-                <article key={step.title} className="step-card">
-                  <span className="step-index">0{index + 1}</span>
-                  <h3>{step.title}</h3>
-                  <p>{step.detail}</p>
-                </article>
-              ))}
+            <div className="wizard-steps">
+              {(['Pipeline', 'Source', 'Destination', 'Review'] as const).map((label, i) => {
+                const n = (i + 1) as WizardStep;
+                const done = wizard.step > n;
+                const active = wizard.step === n;
+                return (
+                  <div key={label} className={`wizard-step${active ? ' wizard-step--active' : done ? ' wizard-step--done' : ''}`}>
+                    <span className="wizard-step__num">{done ? '✓' : n}</span>
+                    <span>{label}</span>
+                  </div>
+                );
+              })}
             </div>
+
+            {wizard.step === 1 && (
+              <div className="section-stack">
+                <div>
+                  <h3 className="form-section-heading">Pipeline</h3>
+                  <p className="muted">A unique name for this replication pipeline.</p>
+                </div>
+                <div className="form-group">
+                  <label className="field-label" htmlFor="wz-name">Pipeline name</label>
+                  <input
+                    id="wz-name"
+                    className="form-input"
+                    type="text"
+                    placeholder="e.g. postgres-analytics"
+                    value={wizard.pipelineName}
+                    onChange={(e) => setWizard((prev) => ({ ...prev, pipelineName: e.target.value }))}
+                  />
+                </div>
+                <div className="form-group">
+                  <span className="field-label">Mode</span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginTop: '0.4rem' }}>
+                    <span className="status-pill status-pill--muted">snapshot</span>
+                    <span className="muted" style={{ fontSize: '0.85rem' }}>Only snapshot mode is supported in v0.1.</span>
+                  </div>
+                </div>
+                <div className="wizard-actions">
+                  <span />
+                  <button
+                    type="button"
+                    disabled={!wizard.pipelineName.trim()}
+                    onClick={() => setWizard((prev) => ({ ...prev, step: 2 }))}
+                  >
+                    Next: Source →
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {wizard.step === 2 && (
+              <div className="section-stack">
+                <div>
+                  <h3 className="form-section-heading">Source — Postgres</h3>
+                  <p className="muted">Connection details for the database you want to replicate from.</p>
+                </div>
+                <div className="form-row">
+                  <div className="form-group">
+                    <label className="field-label" htmlFor="wz-src-host">Host</label>
+                    <input id="wz-src-host" className="form-input" type="text" placeholder="localhost"
+                      value={wizard.source.host}
+                      onChange={(e) => setWizard((prev) => ({ ...prev, source: { ...prev.source, host: e.target.value } }))} />
+                  </div>
+                  <div className="form-group form-group--narrow">
+                    <label className="field-label" htmlFor="wz-src-port">Port</label>
+                    <input id="wz-src-port" className="form-input" type="text" placeholder="5432"
+                      value={wizard.source.port}
+                      onChange={(e) => setWizard((prev) => ({ ...prev, source: { ...prev.source, port: e.target.value } }))} />
+                  </div>
+                </div>
+                <div className="form-group">
+                  <label className="field-label" htmlFor="wz-src-db">Database</label>
+                  <input id="wz-src-db" className="form-input" type="text" placeholder="app"
+                    value={wizard.source.database}
+                    onChange={(e) => setWizard((prev) => ({ ...prev, source: { ...prev.source, database: e.target.value } }))} />
+                </div>
+                <div className="form-row">
+                  <div className="form-group">
+                    <label className="field-label" htmlFor="wz-src-user">Username</label>
+                    <input id="wz-src-user" className="form-input" type="text" placeholder="app_user"
+                      value={wizard.source.username}
+                      onChange={(e) => setWizard((prev) => ({ ...prev, source: { ...prev.source, username: e.target.value } }))} />
+                  </div>
+                  <div className="form-group">
+                    <label className="field-label" htmlFor="wz-src-pass">Password env var</label>
+                    <div className="form-input-prefix-wrap">
+                      <span className="form-input-prefix">env:</span>
+                      <input id="wz-src-pass" className="form-input form-input--prefixed" type="text" placeholder="POSTGRES_PASSWORD"
+                        value={wizard.source.passwordRef}
+                        onChange={(e) => setWizard((prev) => ({ ...prev, source: { ...prev.source, passwordRef: e.target.value } }))} />
+                    </div>
+                  </div>
+                </div>
+                <div className="form-group">
+                  <label className="field-label" htmlFor="wz-src-tables">Tables to replicate</label>
+                  <p className="muted" style={{ margin: '0 0 0.4rem', fontSize: '0.85rem' }}>One per line, in <code>schema.table</code> format.</p>
+                  <textarea id="wz-src-tables" className="form-input form-input--textarea" placeholder={'public.users\npublic.orders'}
+                    value={wizard.source.tables}
+                    onChange={(e) => setWizard((prev) => ({ ...prev, source: { ...prev.source, tables: e.target.value } }))} />
+                </div>
+                <div className="wizard-actions">
+                  <button type="button" className="secondary-button" onClick={() => setWizard((prev) => ({ ...prev, step: 1 }))}>
+                    ← Back
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!wizard.source.host.trim() || !wizard.source.database.trim() || !wizard.source.username.trim() || !wizard.source.tables.trim()}
+                    onClick={() => setWizard((prev) => ({ ...prev, step: 3 }))}
+                  >
+                    Next: Destination →
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {wizard.step === 3 && (
+              <div className="section-stack">
+                <div>
+                  <h3 className="form-section-heading">Destination — Postgres</h3>
+                  <p className="muted">Connection details for the target database. Data is loaded into the <code>astra_raw</code> schema.</p>
+                </div>
+                <div className="form-row">
+                  <div className="form-group">
+                    <label className="field-label" htmlFor="wz-dst-host">Host</label>
+                    <input id="wz-dst-host" className="form-input" type="text" placeholder="localhost"
+                      value={wizard.destination.host}
+                      onChange={(e) => setWizard((prev) => ({ ...prev, destination: { ...prev.destination, host: e.target.value } }))} />
+                  </div>
+                  <div className="form-group form-group--narrow">
+                    <label className="field-label" htmlFor="wz-dst-port">Port</label>
+                    <input id="wz-dst-port" className="form-input" type="text" placeholder="5432"
+                      value={wizard.destination.port}
+                      onChange={(e) => setWizard((prev) => ({ ...prev, destination: { ...prev.destination, port: e.target.value } }))} />
+                  </div>
+                </div>
+                <div className="form-group">
+                  <label className="field-label" htmlFor="wz-dst-db">Database</label>
+                  <input id="wz-dst-db" className="form-input" type="text" placeholder="warehouse"
+                    value={wizard.destination.database}
+                    onChange={(e) => setWizard((prev) => ({ ...prev, destination: { ...prev.destination, database: e.target.value } }))} />
+                </div>
+                <div className="form-row">
+                  <div className="form-group">
+                    <label className="field-label" htmlFor="wz-dst-user">Username</label>
+                    <input id="wz-dst-user" className="form-input" type="text" placeholder="warehouse_user"
+                      value={wizard.destination.username}
+                      onChange={(e) => setWizard((prev) => ({ ...prev, destination: { ...prev.destination, username: e.target.value } }))} />
+                  </div>
+                  <div className="form-group">
+                    <label className="field-label" htmlFor="wz-dst-pass">Password env var</label>
+                    <div className="form-input-prefix-wrap">
+                      <span className="form-input-prefix">env:</span>
+                      <input id="wz-dst-pass" className="form-input form-input--prefixed" type="text" placeholder="DEST_POSTGRES_PASSWORD"
+                        value={wizard.destination.passwordRef}
+                        onChange={(e) => setWizard((prev) => ({ ...prev, destination: { ...prev.destination, passwordRef: e.target.value } }))} />
+                    </div>
+                  </div>
+                </div>
+                <div className="wizard-actions">
+                  <button type="button" className="secondary-button" onClick={() => setWizard((prev) => ({ ...prev, step: 2 }))}>
+                    ← Back
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!wizard.destination.host.trim() || !wizard.destination.database.trim() || !wizard.destination.username.trim()}
+                    onClick={() => setWizard((prev) => ({ ...prev, step: 4 }))}
+                  >
+                    Review spec →
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {wizard.step === 4 && (
+              <div className="section-stack">
+                <div>
+                  <h3 className="form-section-heading">Review spec</h3>
+                  <p className="muted">This is the YAML spec Astra will apply. Go back to change any field.</p>
+                </div>
+                <pre className="yaml-preview">{generateWizardYaml(wizard)}</pre>
+                {wizard.applyStatus && (
+                  <p className={wizard.applyStatus.startsWith('Error') ? 'error-text' : 'success-text'}>
+                    {wizard.applyStatus}
+                  </p>
+                )}
+                <div className="wizard-actions">
+                  <button type="button" className="secondary-button"
+                    onClick={() => setWizard((prev) => ({ ...prev, step: 3, applyStatus: '' }))}
+                    disabled={wizard.applying}
+                  >
+                    ← Back
+                  </button>
+                  <div style={{ display: 'flex', gap: '0.75rem' }}>
+                    <button type="button" className="secondary-button"
+                      onClick={() => setWizard(DEFAULT_WIZARD)}
+                      disabled={wizard.applying}
+                    >
+                      Start over
+                    </button>
+                    <button type="button"
+                      disabled={wizard.applying}
+                      onClick={() => void handleWizardApply()}
+                    >
+                      {wizard.applying ? 'Applying…' : 'Apply spec'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
           </section>
         )}
 
