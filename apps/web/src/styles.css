@@ -203,7 +203,7 @@ button:active {
 
 .section-heading,
 .action-row,
-.list-row,
+.list-row__header,
 .list-row__meta {
   display: flex;
   align-items: center;
@@ -223,6 +223,10 @@ button:active {
 }
 
 .list-row {
+  padding: 0;
+}
+
+.list-row__header {
   padding: 1rem 1.25rem;
 }
 
@@ -260,6 +264,77 @@ button:active {
   color: #9bf0c5;
 }
 
+.status-pill--success {
+  background: rgba(56, 201, 133, 0.14);
+  border-color: rgba(56, 201, 133, 0.3);
+  color: #9bf0c5;
+}
+
+.status-pill--error {
+  background: rgba(255, 100, 100, 0.14);
+  border-color: rgba(255, 100, 100, 0.3);
+  color: #ffb4b4;
+}
+
+.status-pill--running {
+  background: rgba(91, 124, 255, 0.28);
+  border-color: rgba(120, 149, 255, 0.5);
+  color: #d9e1ff;
+}
+
+.run-toggle-btn {
+  font-size: 0.78rem;
+  padding: 0.4rem 0.75rem;
+  white-space: nowrap;
+}
+
+.run-history {
+  border-top: 1px solid rgba(128, 146, 219, 0.15);
+  padding: 1rem 1.25rem;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.run-history__status {
+  margin: 0;
+}
+
+.run-history__list {
+  display: grid;
+  gap: 0;
+}
+
+.run-history__header-row,
+.run-history__row {
+  display: grid;
+  grid-template-columns: 6rem 1fr 1fr 1fr 1fr;
+  gap: 0.5rem;
+  align-items: center;
+  padding: 0.45rem 0;
+  font-size: 0.85rem;
+}
+
+.run-history__header-row {
+  color: #8ea2ff;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  border-bottom: 1px solid rgba(128, 146, 219, 0.15);
+  padding-bottom: 0.6rem;
+  margin-bottom: 0.1rem;
+}
+
+.run-history__row + .run-history__row {
+  border-top: 1px solid rgba(128, 146, 219, 0.08);
+}
+
+.run-history__id {
+  font-family: ui-monospace, 'Cascadia Code', 'Source Code Pro', Menlo, monospace;
+  font-size: 0.78rem;
+  color: #b8c4f4;
+}
+
 @media (max-width: 960px) {
   .shell {
     grid-template-columns: 1fr;
@@ -278,9 +353,19 @@ button:active {
   .hero,
   .section-heading,
   .action-row,
-  .list-row,
+  .list-row__header,
   .list-row__meta {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .run-history__header-row,
+  .run-history__row {
+    grid-template-columns: 5rem 1fr 1fr;
+  }
+
+  .run-history__header-row span:nth-child(n+4),
+  .run-history__row span:nth-child(n+4) {
+    display: none;
   }
 }

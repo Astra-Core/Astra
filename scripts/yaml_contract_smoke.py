@@ -131,6 +131,37 @@ def main():
         if "postgres-analytics" not in names:
             raise SmokeFailure(f"applied pipeline missing from list response: {pipelines_payload}")
 
+        _, create_run_body = http_request(
+            "/api/v1/pipeline-runs",
+            method="POST",
+            json_body={"pipeline_name": "postgres-analytics", "trigger_mode": "manual"},
+            expected_status=200,
+        )
+        created_run = json.loads(create_run_body)
+        for field in ("id", "pipeline_name", "trigger_mode", "status", "started_at", "created_at", "updated_at"):
+            if field not in created_run:
+                raise SmokeFailure(f"created run missing field '{field}': {created_run}")
+        if created_run["pipeline_name"] != "postgres-analytics":
+            raise SmokeFailure(f"created run has wrong pipeline_name: {created_run}")
+        if created_run["trigger_mode"] != "manual":
+            raise SmokeFailure(f"created run has wrong trigger_mode: {created_run}")
+
+        _, history_body = http_request(
+            "/api/v1/pipelines/postgres-analytics/run-history",
+            expected_status=200,
+        )
+        history_payload = json.loads(history_body)
+        if "runs" not in history_payload:
+            raise SmokeFailure(f"run-history response missing 'runs' key: {history_payload}")
+        if len(history_payload["runs"]) == 0:
+            raise SmokeFailure("run-history returned empty list after creating a run")
+        latest_run = history_payload["runs"][0]
+        for field in ("id", "pipeline_name", "trigger_mode", "status", "started_at", "created_at", "updated_at"):
+            if field not in latest_run:
+                raise SmokeFailure(f"run-history entry missing field '{field}': {latest_run}")
+        if latest_run["pipeline_name"] != "postgres-analytics":
+            raise SmokeFailure(f"run-history entry has wrong pipeline_name: {latest_run}")
+
         _, invalid_apply_body = http_request(
             "/api/v1/specs/apply",
             method="POST",
@@ -152,6 +183,11 @@ def main():
             "/api/v1/examples/postgres-to-warehouse",
             "/api/v1/specs/apply",
             "Canonical example loaded from examples/postgres-to-warehouse.astra.yaml",
+            "/api/v1/pipelines/",
+            "run-history",
+            "No runs yet for this pipeline",
+            "Loading run history",
+            "View runs",
         ):
             if marker not in bundle:
                 raise SmokeFailure(f"web bundle no longer contains required UI contract marker: {marker}")
