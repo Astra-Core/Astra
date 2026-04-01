@@ -4,6 +4,7 @@ import { applySpec } from '@/api';
 import { generateWizardYaml } from '@/utils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { PrefixedInput } from '@/components/ui/prefixed-input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
@@ -185,20 +186,15 @@ export function OnboardingWizard({ onApplied }: Props) {
               </div>
               <div className="space-y-2">
                 <Label htmlFor="wz-src-pass">Password env var</Label>
-                <div className="flex items-center rounded-md border border-border bg-input overflow-hidden focus-within:ring-1 focus-within:ring-ring">
-                  <span className="px-3 py-2 text-xs font-mono text-muted-foreground border-r border-border shrink-0">
-                    env:
-                  </span>
-                  <input
-                    id="wz-src-pass"
-                    className="flex-1 bg-transparent px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none"
-                    placeholder="POSTGRES_PASSWORD"
-                    value={wizard.source.passwordRef}
-                    onChange={(e) =>
-                      setWizard((prev) => ({ ...prev, source: { ...prev.source, passwordRef: e.target.value } }))
-                    }
-                  />
-                </div>
+                <PrefixedInput
+                  id="wz-src-pass"
+                  prefix="env:"
+                  placeholder="POSTGRES_PASSWORD"
+                  value={wizard.source.passwordRef}
+                  onChange={(e) =>
+                    setWizard((prev) => ({ ...prev, source: { ...prev.source, passwordRef: e.target.value } }))
+                  }
+                />
               </div>
             </div>
             <div className="space-y-2">
@@ -294,23 +290,18 @@ export function OnboardingWizard({ onApplied }: Props) {
               </div>
               <div className="space-y-2">
                 <Label htmlFor="wz-dst-pass">Password env var</Label>
-                <div className="flex items-center rounded-md border border-border bg-input overflow-hidden focus-within:ring-1 focus-within:ring-ring">
-                  <span className="px-3 py-2 text-xs font-mono text-muted-foreground border-r border-border shrink-0">
-                    env:
-                  </span>
-                  <input
-                    id="wz-dst-pass"
-                    className="flex-1 bg-transparent px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none"
-                    placeholder="DEST_POSTGRES_PASSWORD"
-                    value={wizard.destination.passwordRef}
-                    onChange={(e) =>
-                      setWizard((prev) => ({
-                        ...prev,
-                        destination: { ...prev.destination, passwordRef: e.target.value },
-                      }))
-                    }
-                  />
-                </div>
+                <PrefixedInput
+                  id="wz-dst-pass"
+                  prefix="env:"
+                  placeholder="DEST_POSTGRES_PASSWORD"
+                  value={wizard.destination.passwordRef}
+                  onChange={(e) =>
+                    setWizard((prev) => ({
+                      ...prev,
+                      destination: { ...prev.destination, passwordRef: e.target.value },
+                    }))
+                  }
+                />
               </div>
             </div>
             <div className="flex justify-between">

@@ -135,14 +135,23 @@ export function PipelineList({ refreshToken }: Props) {
                     <div className="flex items-center gap-3 shrink-0">
                       <Badge variant="muted">{pipeline.status}</Badge>
                       <span className="text-xs text-muted-foreground">v{pipeline.spec_version}</span>
-                      <Button variant="outline" size="sm" onClick={() => handleToggleRuns(pipeline.name)}>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        aria-expanded={isExpanded}
+                        aria-controls={`runs-${pipeline.name}-${pipeline.spec_version}`}
+                        onClick={() => handleToggleRuns(pipeline.name)}
+                      >
                         {isExpanded ? 'Hide runs' : 'View runs'}
                       </Button>
                     </div>
                   </div>
 
                   {isExpanded && (
-                    <div className="border-t border-border bg-muted/20 px-5 py-4 space-y-3">
+                    <div
+                      id={`runs-${pipeline.name}-${pipeline.spec_version}`}
+                      className="border-t border-border bg-muted/20 px-5 py-4 space-y-3"
+                    >
                       {!history || history.loading ? (
                         <p className="text-xs text-muted-foreground">Loading run history…</p>
                       ) : history.error ? (
@@ -176,13 +185,19 @@ export function PipelineList({ refreshToken }: Props) {
                                   <span className="text-xs text-muted-foreground">
                                     {formatDuration(run.started_at, run.finished_at)}
                                   </span>
-                                  <Button variant="ghost" size="sm" onClick={() => handleToggleTables(run.id)}>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    aria-expanded={isRunExpanded}
+                                    aria-controls={`tables-${run.id}`}
+                                    onClick={() => handleToggleTables(run.id)}
+                                  >
                                     {isRunExpanded ? 'Hide tables' : 'Tables'}
                                   </Button>
                                 </div>
 
                                 {isRunExpanded && (
-                                  <div className="mx-2 mb-2 rounded-md border border-border/50 bg-background/40">
+                                  <div id={`tables-${run.id}`} className="mx-2 mb-2 rounded-md border border-border/50 bg-background/40">
                                     {!tableState || tableState.loading ? (
                                       <p className="p-3 text-xs text-muted-foreground">Loading table executions…</p>
                                     ) : tableState.error ? (

@@ -14,9 +14,9 @@ export function tableStatusVariant(
   status: string
 ): 'default' | 'secondary' | 'destructive' | 'outline' | 'success' | 'muted' {
   const s = status.toLowerCase();
-  if (s === 'applied') return 'success';
-  if (s === 'failed') return 'destructive';
-  if (s === 'snapshot') return 'default';
+  if (s === 'applied' || s === 'snapshot_complete') return 'success';
+  if (s === 'failed' || s === 'error') return 'destructive';
+  if (s === 'snapshot' || s === 'snapshot_running' || s === 'running') return 'default';
   return 'muted';
 }
 
@@ -44,23 +44,30 @@ export function formatTimestamp(ts: string): string {
   });
 }
 
+// YAML single-quoted scalar: safe for any string — only ' needs escaping (doubled).
+function yamlQuote(s: string): string {
+  return `'${s.replace(/'/g, "''")}'`;
+}
+
 export function generateWizardYaml(w: WizardState): string {
+  const pipelineName = w.pipelineName.trim() || 'my-pipeline';
   const tables = w.source.tables
     .split(/[\n,]/)
     .map((t) => t.trim())
     .filter(Boolean);
-  const tableLines = tables.map((t) => `      - ${t}`).join('\n');
+  const tableLines = tables.map((t) => `      - ${yamlQuote(t)}`).join('\n');
   return `version: v1alpha1
 pipeline:
-  name: ${w.pipelineName || 'my-pipeline'}
+  name: ${yamlQuote(pipelineName)}
   mode: snapshot
+  schedule: manual
 source:
   kind: postgres
   connection:
-    host: ${w.source.host}
+    host: ${yamlQuote(w.source.host)}
     port: ${w.source.port}
-    database: ${w.source.database}
-    username: ${w.source.username}
+    database: ${yamlQuote(w.source.database)}
+    username: ${yamlQuote(w.source.username)}
     passwordRef: env:${w.source.passwordRef}
   capture:
     tables:
@@ -71,11 +78,15 @@ ${tableLines}
 destination:
   kind: postgres
   connection:
-    host: ${w.destination.host}
+    host: ${yamlQuote(w.destination.host)}
     port: ${w.destination.port}
-    database: ${w.destination.database}
-    username: ${w.destination.username}
+    database: ${yamlQuote(w.destination.database)}
+    username: ${yamlQuote(w.destination.username)}
     passwordRef: env:${w.destination.passwordRef}
+  staging:
+    kind: local
+    bucket: astra-staging
+    prefix: ${yamlQuote(`${pipelineName}/`)}
   write:
     mode: append
     batchSize: 10000
