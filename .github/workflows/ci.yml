@@ -59,6 +59,8 @@ jobs:
   e2e-snapshot-smoke:
     name: E2E snapshot smoke
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     services:
       postgres:
         image: postgres:16
