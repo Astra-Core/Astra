@@ -173,7 +173,9 @@ runtime:
 
     // Verify it exists and is active
     let pipelines = service.list_pipelines().await?;
-    assert!(pipelines.iter().any(|p| p.name == "test-lifecycle-pipeline" && p.status == "active"));
+    assert!(pipelines
+        .iter()
+        .any(|p| p.name == "test-lifecycle-pipeline" && p.status == "active"));
 
     // Disable it
     let disabled = service
@@ -208,4 +210,3 @@ runtime:
 
     Ok(())
 }
-

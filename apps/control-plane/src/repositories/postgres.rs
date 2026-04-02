@@ -618,10 +618,7 @@ impl PipelineRepository for PostgresPipelineRepository {
             .client
             .lock()
             .await
-            .execute(
-                "DELETE FROM pipelines WHERE name = $1",
-                &[&pipeline_name],
-            )
+            .execute("DELETE FROM pipelines WHERE name = $1", &[&pipeline_name])
             .await
             .with_context(|| format!("failed to delete pipeline '{}'", pipeline_name))?;
 

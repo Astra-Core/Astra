@@ -311,7 +311,9 @@ impl PipelineService {
         pipeline_name: &str,
         status: &str,
     ) -> anyhow::Result<PipelineSummaryResponse> {
-        const VALID_STATUSES: &[&str] = &["draft", "active", "disabled", "paused", "failed", "archived"];
+        const VALID_STATUSES: &[&str] = &[
+            "draft", "active", "disabled", "paused", "failed", "archived",
+        ];
         if !VALID_STATUSES.contains(&status) {
             anyhow::bail!(
                 "invalid pipeline status '{}'; must be one of: {}",
