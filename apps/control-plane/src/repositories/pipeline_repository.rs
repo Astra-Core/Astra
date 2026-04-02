@@ -1,3 +1,4 @@
+use astra_metadata::PipelineStatus;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
@@ -8,7 +9,7 @@ pub struct PipelineRecord {
     pub name: String,
     pub source_kind: String,
     pub destination_kind: String,
-    pub status: String,
+    pub status: PipelineStatus,
     pub spec_version: i32,
 }
 
@@ -160,6 +161,6 @@ pub trait PipelineRepository: Send + Sync {
     async fn update_pipeline_status(
         &self,
         pipeline_name: &str,
-        status: &str,
+        status: PipelineStatus,
     ) -> anyhow::Result<PipelineRecord>;
 }

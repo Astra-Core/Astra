@@ -6,11 +6,12 @@ use crate::{
         UpsertTableExecutionRecord,
     },
 };
-use anyhow::Context;
+use anyhow::{anyhow, Context};
+use astra_metadata::PipelineStatus;
 use async_trait::async_trait;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
-use std::sync::Arc;
+use std::{str::FromStr, sync::Arc};
 use tokio::sync::Mutex;
 use tokio_postgres::{types::Json, Client, NoTls, Row};
 use uuid::Uuid;
@@ -205,14 +206,8 @@ impl PipelineRepository for PostgresPipelineRepository {
 
         Ok(rows
             .into_iter()
-            .map(|row| PipelineRecord {
-                name: row.get("name"),
-                source_kind: row.get("source_kind"),
-                destination_kind: row.get("destination_kind"),
-                status: row.get("status"),
-                spec_version: row.get("spec_version"),
-            })
-            .collect())
+            .map(map_pipeline_row)
+            .collect::<anyhow::Result<Vec<_>>>()?)
     }
 
     async fn apply_spec(
@@ -224,7 +219,7 @@ impl PipelineRepository for PostgresPipelineRepository {
         let pipeline_name = spec.pipeline.name.clone();
         let source_kind = spec.source.kind.clone();
         let destination_kind = spec.destination.kind.clone();
-        let status = "active".to_string();
+        let status = PipelineStatus::Active;
         let spec_version_label = spec.version.clone();
         let spec_model: Value =
             serde_json::to_value(&spec).context("failed to serialize normalized spec JSON")?;
@@ -264,7 +259,7 @@ impl PipelineRepository for PostgresPipelineRepository {
                         name: pipeline_name,
                         source_kind,
                         destination_kind,
-                        status,
+                        status: status.clone(),
                         spec_version: active_version,
                     },
                     content_hash,
@@ -285,7 +280,7 @@ impl PipelineRepository for PostgresPipelineRepository {
                         &pipeline_name,
                         &source_kind,
                         &destination_kind,
-                        &status,
+                        &status.to_string(),
                     ],
                 )
                 .await
@@ -329,7 +324,7 @@ impl PipelineRepository for PostgresPipelineRepository {
                     &pipeline_id,
                     &source_kind,
                     &destination_kind,
-                    &status,
+                    &status.to_string(),
                     &spec_id,
                 ],
             )
@@ -631,7 +626,7 @@ impl PipelineRepository for PostgresPipelineRepository {
     async fn update_pipeline_status(
         &self,
         pipeline_name: &str,
-        status: &str,
+        status: PipelineStatus,
     ) -> anyhow::Result<PipelineRecord> {
         let row = self
             .client
@@ -645,22 +640,26 @@ impl PipelineRepository for PostgresPipelineRepository {
                 RETURNING name, source_kind, destination_kind, status,
                           (SELECT version FROM pipeline_specs WHERE id = active_spec_id) AS spec_version
                 "#,
-                &[&status, &pipeline_name],
+                &[&status.to_string(), &pipeline_name],
             )
             .await
             .with_context(|| format!("failed to update status for pipeline '{}'", pipeline_name))?;
 
         match row {
-            Some(r) => Ok(PipelineRecord {
-                name: r.get("name"),
-                source_kind: r.get("source_kind"),
-                destination_kind: r.get("destination_kind"),
-                status: r.get("status"),
-                spec_version: r.get::<_, Option<i32>>("spec_version").unwrap_or(0),
-            }),
+            Some(r) => Ok(map_pipeline_row(r)?),
             None => Err(anyhow::Error::new(NotFoundError(pipeline_name.to_string()))),
         }
     }
+}
+
+fn map_pipeline_row(row: Row) -> anyhow::Result<PipelineRecord> {
+    Ok(PipelineRecord {
+        name: row.get("name"),
+        source_kind: row.get("source_kind"),
+        destination_kind: row.get("destination_kind"),
+        status: parse_pipeline_status(row.get("status"))?,
+        spec_version: row.get::<_, Option<i32>>("spec_version").unwrap_or(0),
+    })
 }
 
 fn map_table_execution_row(row: Row) -> TableExecutionRecord {
@@ -726,4 +725,8 @@ fn hash_content(content: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(content.as_bytes());
     format!("{:x}", hasher.finalize())
+}
+
+fn parse_pipeline_status(status: String) -> anyhow::Result<PipelineStatus> {
+    PipelineStatus::from_str(&status).map_err(|err| anyhow!(err))
 }

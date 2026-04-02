@@ -7,6 +7,7 @@ use crate::{
     },
 };
 use anyhow::anyhow;
+use astra_metadata::PipelineStatus;
 use async_trait::async_trait;
 use chrono::Utc;
 use sha2::{Digest, Sha256};
@@ -100,7 +101,7 @@ impl PipelineRepository for InMemoryPipelineRepository {
             name: name.clone(),
             source_kind: spec.source.kind.clone(),
             destination_kind: spec.destination.kind.clone(),
-            status: "active".to_string(),
+            status: PipelineStatus::Active,
             spec_version: next_version,
         };
 
@@ -370,12 +371,12 @@ impl PipelineRepository for InMemoryPipelineRepository {
     async fn update_pipeline_status(
         &self,
         pipeline_name: &str,
-        status: &str,
+        status: PipelineStatus,
     ) -> anyhow::Result<PipelineRecord> {
         let mut guard = self.inner.write().await;
         match guard.get_mut(pipeline_name) {
             Some(stored) => {
-                stored.record.status = status.to_string();
+                stored.record.status = status;
                 stored.updated_at = Utc::now();
                 Ok(stored.record.clone())
             }

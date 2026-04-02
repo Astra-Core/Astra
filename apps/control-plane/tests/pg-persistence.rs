@@ -4,6 +4,7 @@ use astra_control_plane::repositories::{
     PipelineRepository, PipelineRunRecord, PostgresPipelineRepository, RecordStagedArtifactRecord,
     StagedArtifactRecord,
 };
+use astra_metadata::PipelineStatus;
 use astra_yaml::AstraSpec;
 use chrono::Utc;
 use serde_json::json;
@@ -75,7 +76,7 @@ runtime:
         .apply_spec(spec.clone(), raw_yaml.clone(), None)
         .await?;
     assert_eq!(applied.pipeline.name, pipeline_name);
-    assert_eq!(applied.pipeline.status, "active");
+    assert_eq!(applied.pipeline.status, PipelineStatus::Active);
 
     // create_run
     let now = Utc::now();
@@ -224,14 +225,14 @@ runtime:
 
     // Test disable / enable (update_pipeline_status)
     let disabled = repo3
-        .update_pipeline_status(&pipeline_name, "disabled")
+        .update_pipeline_status(&pipeline_name, PipelineStatus::Disabled)
         .await?;
-    assert_eq!(disabled.status, "disabled");
+    assert_eq!(disabled.status, PipelineStatus::Disabled);
 
     let enabled = repo3
-        .update_pipeline_status(&pipeline_name, "active")
+        .update_pipeline_status(&pipeline_name, PipelineStatus::Active)
         .await?;
-    assert_eq!(enabled.status, "active");
+    assert_eq!(enabled.status, PipelineStatus::Active);
 
     // Test delete_pipeline removes the pipeline and cascades
     repo3.delete_pipeline(&pipeline_name).await?;

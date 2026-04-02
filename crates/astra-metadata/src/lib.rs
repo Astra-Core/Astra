@@ -1,6 +1,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::{fmt, str::FromStr};
 use uuid::Uuid;
 
 pub const CRATE_NAME: &str = "astra-metadata";
@@ -14,6 +15,36 @@ pub enum PipelineStatus {
     Paused,
     Failed,
     Archived,
+}
+
+impl fmt::Display for PipelineStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let value = match self {
+            Self::Draft => "draft",
+            Self::Active => "active",
+            Self::Disabled => "disabled",
+            Self::Paused => "paused",
+            Self::Failed => "failed",
+            Self::Archived => "archived",
+        };
+        f.write_str(value)
+    }
+}
+
+impl FromStr for PipelineStatus {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "draft" => Ok(Self::Draft),
+            "active" => Ok(Self::Active),
+            "disabled" => Ok(Self::Disabled),
+            "paused" => Ok(Self::Paused),
+            "failed" => Ok(Self::Failed),
+            "archived" => Ok(Self::Archived),
+            _ => Err(format!("invalid pipeline status '{s}'")),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

@@ -6,6 +6,7 @@ use astra_control_plane::{
     services::PipelineService,
     InMemoryPipelineRepository,
 };
+use astra_metadata::PipelineStatus;
 
 #[tokio::test]
 async fn table_execution_checkpoint_metadata_round_trips_via_service() -> Result<()> {
@@ -179,19 +180,19 @@ runtime:
 
     // Disable it
     let disabled = service
-        .update_pipeline_status("test-lifecycle-pipeline", "disabled")
+        .update_pipeline_status("test-lifecycle-pipeline", PipelineStatus::Disabled)
         .await?;
     assert_eq!(disabled.status, "disabled");
 
     // Re-enable it
     let enabled = service
-        .update_pipeline_status("test-lifecycle-pipeline", "active")
+        .update_pipeline_status("test-lifecycle-pipeline", PipelineStatus::Active)
         .await?;
     assert_eq!(enabled.status, "active");
 
     // Disabling a non-existent pipeline returns an error
     let err = service
-        .update_pipeline_status("no-such-pipeline", "disabled")
+        .update_pipeline_status("no-such-pipeline", PipelineStatus::Disabled)
         .await;
     assert!(err.is_err());
 
