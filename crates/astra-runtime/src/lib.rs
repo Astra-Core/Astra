@@ -1,12 +1,7 @@
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
-use aws_config::{self, BehaviorVersion};
-use aws_credential_types::Credentials;
-use aws_sdk_s3::{
-    config::{Builder as S3ConfigBuilder, Region},
-    primitives::ByteStream,
-    Client,
-};
+use bytes::Bytes;
+use object_store::{aws::{AmazonS3, AmazonS3Builder}, path::Path as ObjectPath, ObjectStoreExt};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
@@ -109,25 +104,36 @@ impl MinioStagingConfig {
         })
     }
 
-    async fn s3_client(&self) -> Result<Client> {
-        let shared_config = aws_config::defaults(BehaviorVersion::latest())
-            .credentials_provider(Credentials::new(
-                self.access_key.clone(),
-                self.secret_key.clone(),
-                None,
-                None,
-                "astra-minio-stage-store",
+    fn object_store(&self, bucket: &str) -> Result<AmazonS3> {
+        AmazonS3Builder::new()
+            .with_access_key_id(&self.access_key)
+            .with_secret_access_key(&self.secret_key)
+            .with_region(&self.region)
+            .with_bucket_name(bucket)
+            .with_endpoint(&self.endpoint)
+            .with_allow_http(true)
+            .with_virtual_hosted_style_request(false)
+            .build()
+            .context("failed to build S3 object store client")
+    }
+
+    async fn ensure_bucket(&self, bucket: &str) -> Result<()> {
+        let url = format!("{}/{}", self.endpoint.trim_end_matches('/'), bucket);
+        let resp = reqwest::Client::new()
+            .put(&url)
+            .header("x-amz-content-sha256", "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+            .send()
+            .await
+            .with_context(|| format!("failed to reach MinIO at {url}"))?;
+        // 200 = created, 409 = already exists — both are fine
+        if resp.status().is_success() || resp.status() == 409 {
+            Ok(())
+        } else {
+            Err(anyhow!(
+                "unexpected status creating bucket {bucket}: {}",
+                resp.status()
             ))
-            .region(Region::new(self.region.clone()))
-            .load()
-            .await;
-
-        let s3_config = S3ConfigBuilder::from(&shared_config)
-            .endpoint_url(self.endpoint.clone())
-            .force_path_style(true)
-            .build();
-
-        Ok(Client::from_conf(s3_config))
+        }
     }
 }
 
@@ -366,36 +372,16 @@ impl MinioStageChunkStore {
 #[async_trait]
 impl StageChunkStore for MinioStageChunkStore {
     async fn ensure_ready(&self) -> Result<()> {
-        let client = self.config.s3_client().await?;
-        let bucket = &self.config.storage.bucket;
-
-        match client.head_bucket().bucket(bucket).send().await {
-            Ok(_) => Ok(()),
-            Err(_) => {
-                client
-                    .create_bucket()
-                    .bucket(bucket)
-                    .send()
-                    .await
-                    .with_context(|| format!("failed to create staging bucket {bucket}"))?;
-                Ok(())
-            }
-        }
+        self.config.ensure_bucket(&self.config.storage.bucket).await
     }
 
     async fn write_chunk(&self, request: StageChunkRequest) -> Result<StageChunk> {
         self.ensure_ready().await?;
-        let client = self.config.s3_client().await?;
         let chunk = request.to_chunk(&self.config.storage);
-
-        client
-            .put_object()
-            .bucket(&chunk.bucket)
-            .key(&chunk.object_key)
-            .content_type(chunk.content_type.clone())
-            .content_encoding(chunk.content_encoding.clone())
-            .body(ByteStream::from(request.payload.bytes))
-            .send()
+        let store = self.config.object_store(&chunk.bucket)?;
+        let path = ObjectPath::from(chunk.object_key.as_str());
+        store
+            .put(&path, Bytes::from(request.payload.bytes).into())
             .await
             .with_context(|| {
                 format!(
@@ -403,18 +389,15 @@ impl StageChunkStore for MinioStageChunkStore {
                     chunk.bucket, chunk.object_key, self.config.endpoint
                 )
             })?;
-
         Ok(chunk)
     }
 
     async fn read_chunk(&self, chunk: &StageChunk) -> Result<Vec<u8>> {
         ensure_chunk_belongs_to_bucket(&self.config.storage.bucket, chunk)?;
-        let client = self.config.s3_client().await?;
-        let output = client
-            .get_object()
-            .bucket(&chunk.bucket)
-            .key(&chunk.object_key)
-            .send()
+        let store = self.config.object_store(&chunk.bucket)?;
+        let path = ObjectPath::from(chunk.object_key.as_str());
+        let result = store
+            .get(&path)
             .await
             .with_context(|| {
                 format!(
@@ -422,13 +405,11 @@ impl StageChunkStore for MinioStageChunkStore {
                     chunk.bucket, chunk.object_key, self.config.endpoint
                 )
             })?;
-
-        let aggregated = output
-            .body
-            .collect()
+        result
+            .bytes()
             .await
-            .context("failed to collect staged object body")?;
-        Ok(aggregated.into_bytes().to_vec())
+            .context("failed to collect staged object body")
+            .map(|b| b.to_vec())
     }
 }
 
