@@ -24,16 +24,7 @@ impl PipelineService {
 
     pub async fn list_pipelines(&self) -> anyhow::Result<Vec<PipelineSummaryResponse>> {
         let pipelines = self.repository.list_pipelines().await?;
-        Ok(pipelines
-            .into_iter()
-            .map(|p| PipelineSummaryResponse {
-                name: p.name,
-                source_kind: p.source_kind,
-                destination_kind: p.destination_kind,
-                status: p.status.to_string(),
-                spec_version: p.spec_version,
-            })
-            .collect())
+        Ok(pipelines.into_iter().map(Into::into).collect())
     }
 
     pub async fn apply_spec(
@@ -75,18 +66,7 @@ impl PipelineService {
                 started_at: started_at.unwrap_or_else(Utc::now),
             })
             .await?;
-        Ok(PipelineRunResponse {
-            id: run.id,
-            pipeline_name: run.pipeline_name,
-            trigger_mode: run.trigger_mode,
-            status: run.status,
-            worker_id: run.worker_id,
-            started_at: run.started_at,
-            finished_at: run.finished_at,
-            created_at: run.created_at,
-            updated_at: run.updated_at,
-            stats_json: run.stats_json,
-        })
+        Ok(run.into())
     }
 
     pub async fn list_pipeline_runs(
@@ -94,21 +74,7 @@ impl PipelineService {
         pipeline_name: &str,
     ) -> anyhow::Result<Vec<PipelineRunResponse>> {
         let runs = self.repository.list_pipeline_runs(pipeline_name).await?;
-        Ok(runs
-            .into_iter()
-            .map(|run| PipelineRunResponse {
-                id: run.id,
-                pipeline_name: run.pipeline_name,
-                trigger_mode: run.trigger_mode,
-                status: run.status,
-                worker_id: run.worker_id,
-                started_at: run.started_at,
-                finished_at: run.finished_at,
-                created_at: run.created_at,
-                updated_at: run.updated_at,
-                stats_json: run.stats_json,
-            })
-            .collect())
+        Ok(runs.into_iter().map(Into::into).collect())
     }
 
     pub async fn get_latest_run(
@@ -116,18 +82,7 @@ impl PipelineService {
         pipeline_name: &str,
     ) -> anyhow::Result<Option<PipelineRunResponse>> {
         let run = self.repository.get_latest_run(pipeline_name).await?;
-        Ok(run.map(|run| PipelineRunResponse {
-            id: run.id,
-            pipeline_name: run.pipeline_name,
-            trigger_mode: run.trigger_mode,
-            status: run.status,
-            worker_id: run.worker_id,
-            started_at: run.started_at,
-            finished_at: run.finished_at,
-            created_at: run.created_at,
-            updated_at: run.updated_at,
-            stats_json: run.stats_json,
-        }))
+        Ok(run.map(Into::into))
     }
 
     pub async fn get_run_history(
@@ -139,21 +94,7 @@ impl PipelineService {
             .repository
             .get_run_history(pipeline_name, limit)
             .await?;
-        Ok(runs
-            .into_iter()
-            .map(|run| PipelineRunResponse {
-                id: run.id,
-                pipeline_name: run.pipeline_name,
-                trigger_mode: run.trigger_mode,
-                status: run.status,
-                worker_id: run.worker_id,
-                started_at: run.started_at,
-                finished_at: run.finished_at,
-                created_at: run.created_at,
-                updated_at: run.updated_at,
-                stats_json: run.stats_json,
-            })
-            .collect())
+        Ok(runs.into_iter().map(Into::into).collect())
     }
 
     pub async fn record_staged_artifact(
@@ -164,22 +105,7 @@ impl PipelineService {
             record.metadata_json = serde_json::json!({});
         }
         let artifact = self.repository.record_staged_artifact(record).await?;
-        Ok(StagedArtifactResponse {
-            id: artifact.id,
-            pipeline_run_id: artifact.pipeline_run_id,
-            stream_name: artifact.stream_name,
-            partition_key: artifact.partition_key,
-            sequence: artifact.sequence,
-            bucket: artifact.bucket,
-            object_key: artifact.object_key,
-            bytes_written: artifact.bytes_written,
-            row_count: artifact.row_count,
-            content_type: artifact.content_type,
-            content_encoding: artifact.content_encoding,
-            schema_fingerprint: artifact.schema_fingerprint,
-            metadata_json: artifact.metadata_json,
-            created_at: artifact.created_at,
-        })
+        Ok(artifact.into())
     }
 
     pub async fn list_staged_artifacts(
@@ -190,25 +116,7 @@ impl PipelineService {
             .repository
             .list_staged_artifacts(pipeline_run_id)
             .await?;
-        Ok(artifacts
-            .into_iter()
-            .map(|artifact| StagedArtifactResponse {
-                id: artifact.id,
-                pipeline_run_id: artifact.pipeline_run_id,
-                stream_name: artifact.stream_name,
-                partition_key: artifact.partition_key,
-                sequence: artifact.sequence,
-                bucket: artifact.bucket,
-                object_key: artifact.object_key,
-                bytes_written: artifact.bytes_written,
-                row_count: artifact.row_count,
-                content_type: artifact.content_type,
-                content_encoding: artifact.content_encoding,
-                schema_fingerprint: artifact.schema_fingerprint,
-                metadata_json: artifact.metadata_json,
-                created_at: artifact.created_at,
-            })
-            .collect())
+        Ok(artifacts.into_iter().map(Into::into).collect())
     }
 
     pub async fn list_table_executions(
@@ -219,24 +127,7 @@ impl PipelineService {
             .repository
             .list_table_executions(pipeline_run_id)
             .await?;
-        Ok(tables
-            .into_iter()
-            .map(|table| TableExecutionResponse {
-                id: table.id,
-                stream_name: table.stream_name,
-                status: table.status,
-                rows_processed: table.rows_processed,
-                rows_total: table.rows_total,
-                error_summary: table.error_summary,
-                checkpoint_next_sequence: table.checkpoint_next_sequence,
-                checkpoint_rows_staged: table.checkpoint_rows_staged,
-                checkpoint_last_chunk_key: table.checkpoint_last_chunk_key,
-                checkpoint_completed: table.checkpoint_completed,
-                started_at: table.started_at,
-                finished_at: table.finished_at,
-                updated_at: table.updated_at,
-            })
-            .collect())
+        Ok(tables.into_iter().map(Into::into).collect())
     }
 
     pub async fn upsert_table_execution(
@@ -257,21 +148,7 @@ impl PipelineService {
             checkpoint_completed: request.checkpoint_completed,
         };
         let table = self.repository.upsert_table_execution(record).await?;
-        Ok(TableExecutionResponse {
-            id: table.id,
-            stream_name: table.stream_name,
-            status: table.status,
-            rows_processed: table.rows_processed,
-            rows_total: table.rows_total,
-            error_summary: table.error_summary,
-            checkpoint_next_sequence: table.checkpoint_next_sequence,
-            checkpoint_rows_staged: table.checkpoint_rows_staged,
-            checkpoint_last_chunk_key: table.checkpoint_last_chunk_key,
-            checkpoint_completed: table.checkpoint_completed,
-            started_at: table.started_at,
-            finished_at: table.finished_at,
-            updated_at: table.updated_at,
-        })
+        Ok(table.into())
     }
 
     pub async fn get_pipeline_yaml(&self, pipeline_name: &str) -> anyhow::Result<Option<String>> {
@@ -291,13 +168,7 @@ impl PipelineService {
             .repository
             .update_pipeline_status(pipeline_name, status)
             .await?;
-        Ok(PipelineSummaryResponse {
-            name: record.name,
-            source_kind: record.source_kind,
-            destination_kind: record.destination_kind,
-            status: record.status.to_string(),
-            spec_version: record.spec_version,
-        })
+        Ok(record.into())
     }
 
     pub async fn update_pipeline_run_status(
@@ -320,17 +191,6 @@ impl PipelineService {
             .repository
             .update_pipeline_run_status(run_id, status, merged_stats)
             .await?;
-        Ok(PipelineRunResponse {
-            id: run.id,
-            pipeline_name: run.pipeline_name,
-            trigger_mode: run.trigger_mode,
-            status: run.status,
-            worker_id: run.worker_id,
-            started_at: run.started_at,
-            finished_at: run.finished_at,
-            created_at: run.created_at,
-            updated_at: run.updated_at,
-            stats_json: run.stats_json,
-        })
+        Ok(run.into())
     }
 }
