@@ -157,4 +157,3 @@ pub struct UpsertTableExecutionRequest {
     #[serde(default)]
     pub checkpoint_completed: Option<bool>,
 }
-
