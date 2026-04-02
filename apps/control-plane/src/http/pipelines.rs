@@ -5,6 +5,7 @@ use crate::{
         RecordStagedArtifactRequest, StagedArtifactsResponse, TableExecutionResponse,
         TableExecutionsResponse, UpsertTableExecutionRequest,
     },
+    repositories::RecordStagedArtifactRecord,
     state::AppState,
 };
 use axum::{
@@ -126,20 +127,22 @@ pub async fn record_staged_artifact(
 
     let response = state
         .pipeline_service
-        .record_staged_artifact(
+        .record_staged_artifact(RecordStagedArtifactRecord {
             pipeline_run_id,
-            request.stream_name,
-            request.partition_key,
-            request.sequence,
-            request.bucket,
-            request.object_key,
-            request.bytes_written,
-            request.row_count,
-            request.content_type,
-            request.content_encoding,
-            request.schema_fingerprint,
-            request.metadata_json,
-        )
+            stream_name: request.stream_name,
+            partition_key: request.partition_key,
+            sequence: request.sequence,
+            bucket: request.bucket,
+            object_key: request.object_key,
+            bytes_written: request.bytes_written,
+            row_count: request.row_count,
+            content_type: request.content_type,
+            content_encoding: request.content_encoding,
+            schema_fingerprint: request.schema_fingerprint,
+            metadata_json: request
+                .metadata_json
+                .unwrap_or_else(|| serde_json::json!({})),
+        })
         .await?;
     Ok(Json(response))
 }

@@ -155,39 +155,14 @@ impl PipelineService {
             .collect())
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub async fn record_staged_artifact(
         &self,
-        pipeline_run_id: Uuid,
-        stream_name: String,
-        partition_key: String,
-        sequence: i64,
-        bucket: String,
-        object_key: String,
-        bytes_written: i64,
-        row_count: i64,
-        content_type: String,
-        content_encoding: String,
-        schema_fingerprint: Option<String>,
-        metadata_json: Option<serde_json::Value>,
+        mut record: RecordStagedArtifactRecord,
     ) -> anyhow::Result<StagedArtifactResponse> {
-        let artifact = self
-            .repository
-            .record_staged_artifact(RecordStagedArtifactRecord {
-                pipeline_run_id,
-                stream_name,
-                partition_key,
-                sequence,
-                bucket,
-                object_key,
-                bytes_written,
-                row_count,
-                content_type,
-                content_encoding,
-                schema_fingerprint,
-                metadata_json: metadata_json.unwrap_or_else(|| serde_json::json!({})),
-            })
-            .await?;
+        if record.metadata_json.is_null() {
+            record.metadata_json = serde_json::json!({});
+        }
+        let artifact = self.repository.record_staged_artifact(record).await?;
         Ok(StagedArtifactResponse {
             id: artifact.id,
             pipeline_run_id: artifact.pipeline_run_id,
