@@ -1,0 +1,79 @@
+# Changelog
+
+All notable changes to Astra are documented here.
+
+Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+
+---
+
+## [0.1.0] - 2026-04-01
+
+First public release of Astra. One complete vertical slice: Postgres snapshot → local/MinIO staging → Postgres raw destination, with a control plane API and web UI for visibility.
+
+### Added
+
+#### Pipeline spec
+- `v1alpha1` YAML pipeline spec — parsing, validation, and structured error reporting
+- `validate` CLI command — rejects malformed specs before any execution
+- Spec stored as JSON in the control plane and shared across CLI, API, and UI
+
+#### Postgres source
+- `discover-source` — enumerates tables, column types, and primary keys
+- Full snapshot with paginated chunking; configurable `chunkSize` per table
+- Resumable execution — checkpoint ledger tracks processed chunks; interrupted snapshots resume from the last unfinished chunk
+- `--no-resume` flag to force a full restart
+
+#### Staging
+- Local filesystem staging — rows written as JSONL.gz chunks
+- MinIO/S3 staging — same chunk format and metadata schema via S3-compatible adapter
+- Stable staging contract: `StageChunk` metadata (stream name, partition key, sequence, byte count, row count, schema fingerprint) consistent across backends
+
+#### Postgres destination (raw loader)
+- Loads staged JSONL.gz chunks into an `astra_raw` schema on the destination Postgres
+- Table naming: `raw_<schema>_<table>` (e.g. `astra_raw.raw_public_smoke_users`)
+- Idempotent chunk application — completed chunks tracked in `astra_raw._applied_chunks` and skipped on rerun
+
+#### CLI commands
+- `snapshot-to-local-staging` — snapshot Postgres tables to local JSONL.gz chunks
+- `snapshot-to-minio-staging` — snapshot to MinIO/S3 chunks
+- `load-local-staging-to-postgres` — load staged chunks into Postgres raw destination
+- `execute-local-snapshot` — end-to-end: snapshot → local staging → Postgres load in one command
+
+#### Control-plane API
+- `GET /api/v1/pipelines` — list registered pipelines
+- `POST /api/v1/specs/apply` — register or update a pipeline spec
+- `GET /api/v1/pipelines/:name/runs` — list runs for a pipeline
+- `GET /api/v1/pipelines/:name/latest-run` — latest run summary
+- `GET /api/v1/pipelines/:name/run-history` — paginated run history
+- `POST /api/v1/pipeline-runs` — create a run record
+- `POST /api/v1/pipeline-runs/:id/status` — update run status and progress
+- `GET /api/v1/pipeline-runs/:id/table-executions` — per-table execution status and row counts
+- `POST /api/v1/pipeline-runs/:id/artifacts` — record a staged artifact
+
+#### Web UI
+- Pipeline inventory — name, source/destination kind, status, spec version
+- Run history per pipeline — run ID, status, trigger mode, start time, duration
+- Table-level drill-down per run — stream name, status, rows processed / rows total, error summary
+- YAML studio — load, edit, and apply a pipeline spec via the API
+- Onboarding wizard — 4-step guided pipeline creation flow
+- Built with React 18 + TypeScript + Vite; served by the control-plane binary
+
+#### Persistence
+- In-memory (default) — suitable for local development; no config required
+- Postgres-backed — set `ASTRA_DATABASE_URL`; pipeline, run, table execution, and artifact records are durable
+
+#### Testing
+- Unit and integration tests across all crates (`cargo test --workspace`)
+- Postgres repository integration tests
+- End-to-end snapshot smoke test (`python3 scripts/e2e_snapshot_smoke.py`) — seeds fixtures, runs `execute-local-snapshot`, verifies destination row counts, validates idempotent rerun
+
+### Known limitations
+
+See [`docs/v0.1-SCOPE.md`](docs/v0.1-SCOPE.md) for the full list. Key ones:
+
+- **CDC not implemented** — returns an explicit error if attempted
+- **Append-only destination writes** — no merge, upsert, or deduplication
+- **Sequential table processing** — multi-table parallelism parsed but not enforced
+- **Secrets via environment variables only** — `env:KEY` is the only supported `passwordRef` format
+- **No structured observability** — execution output to stdout only
+- **Single local worker** — no scheduler or distributed execution; pipelines triggered manually via CLI

@@ -1,208 +1,135 @@
 # Astra
 
-Astra is an open-source data replication platform aiming to be the easy, fast alternative to Airbyte and the self-hostable answer to Fivetran.
+Astra is a self-hostable data replication platform — a Rust-first alternative to Airbyte/Fivetran for database CDC and bulk snapshot replication. Pipelines are defined in YAML and executed via CLI or control-plane API.
 
-## Product goals
+## Quickstart
 
-- **Blazing fast pipelines** for database CDC and bulk replication
-- **Stupidly easy onboarding** through both UI flows and declarative YAML
-- **Easy self-hosting** with a sane Podman Compose path
-- **Cloud-ready architecture** without forcing cloud complexity onto local installs
+### Prerequisites
 
-## v0.1 priorities
+- [Rust](https://rustup.rs) (stable)
+- [Node.js](https://nodejs.org) 20+
+- [Podman](https://podman.io) + `podman-compose` (or Docker Compose)
+- Python 3.9+ (for smoke tests)
 
-Astra v0.1 focuses on one real vertical slice:
-- configure a source and destination
-- run an initial snapshot/backfill
-- continue with incremental sync later; CDC is not executable yet in the current Postgres source skeleton
-- view job history and status in the UI
-- manage the same config via YAML
-
-## Proposed architecture
-
-- Rust-first modular monolith for the control plane
-- Postgres for metadata/state/checkpoints
-- Object storage for durable staging/replay
-- High-performance DB CDC lane
-- Python runtime for long-tail SaaS/community connectors
-
-See the docs folder for the real details instead of README cosplay.
-
-## Docs
-
-- Product brief: `docs/product/brief.md`
-- Architecture RFC: `docs/architecture/rfc-0001-v1-architecture.md`
-- YAML spec draft: `docs/architecture/yaml-spec-draft.md`
-- Staging contract draft: `docs/architecture/staging-contract.md`
-- Example pipeline config: `examples/postgres-to-warehouse.astra.yaml`
-- End-to-end YAML contract smoke test: `python3 scripts/yaml_contract_smoke.py`
-- Kanban + epics + issue seed: `docs/product/kanban-and-issue-seed.md`
-- v0.1 roadmap: `docs/product/v0.1-roadmap.md`
-- ADR: `docs/decisions/adr-0001-modular-monolith.md`
-
-## Local development stack
-
-Astra includes a minimal local dependency stack at `deploy/docker-compose/docker-compose.yml`.
-
-Start it with:
+### 1. Start the local stack
 
 ```bash
 podman compose -f deploy/docker-compose/docker-compose.yml up -d
 ```
 
-Stop it with:
+This starts Postgres (`:5432`) and MinIO (`:9000` API, `:9001` console).
+
+### 2. Build
 
 ```bash
-podman compose -f deploy/docker-compose/docker-compose.yml down
+cargo build
+cd apps/web && npm install && npm run build && cd ../..
 ```
 
-Default local ports:
-- Postgres metadata/state: `5432`
-- MinIO S3 API: `9000`
-- MinIO console: `9001`
-
-For local-first staging without a live object store, the runtime crate now includes a filesystem-backed adapter that preserves the same bucket/object-key layout used by MinIO/S3. See `docs/architecture/staging-contract.md` and `.env.example` for the current local staging knobs.
-
-## Suggested repo layout
-
-```text
-apps/
-  control-plane/
-  web/
-  worker/
-  cli/
-crates/
-  astra-core/
-  astra-runtime/
-  astra-metadata/
-  astra-connectors/
-  astra-cdc/
-  astra-saas-sdk/
-  astra-python-runtime/
-  astra-yaml/
-  astra-api/
-  astra-observability/
-  astra-secrets/
-connectors/
-  rust/
-  python/
-docs/
-deploy/
-```
-
-## Immediate next steps
-
-1. Finalize the YAML spec and metadata model
-2. Build the control plane skeleton
-3. Implement the first Postgres CDC path
-4. Add object-storage staging and one destination loader
-5. Add UI onboarding and job history
-
-## Running the current web app foundation
-
-The React + TypeScript web app foundation lives in `apps/web`.
-
-For backend-only work, run the control plane from the repo root:
+### 3. Start the control plane
 
 ```bash
-cargo run -p astra-control-plane
+ASTRA_DATABASE_URL=postgres://astra:astra@localhost:5432/astra \
+  cargo run -p astra-control-plane
 ```
 
-For frontend development, run the control plane in one terminal, then in `apps/web/` run:
+Open [http://127.0.0.1:8080](http://127.0.0.1:8080) for the web UI.
 
-```bash
-npm install
-npm run dev
+### 4. Seed fixture data
+
+```sql
+-- connect: psql postgres://astra:astra@localhost:5432/astra
+CREATE TABLE IF NOT EXISTS public.smoke_users (
+  id SERIAL PRIMARY KEY, name TEXT, email TEXT
+);
+CREATE TABLE IF NOT EXISTS public.smoke_orders (
+  id SERIAL PRIMARY KEY, user_id INT, amount NUMERIC
+);
+INSERT INTO public.smoke_users (name, email)
+  SELECT 'user_' || i, 'user_' || i || '@example.com'
+  FROM generate_series(1, 20) AS i;
+INSERT INTO public.smoke_orders (user_id, amount)
+  SELECT (random() * 19 + 1)::int, (random() * 1000)::numeric(10,2)
+  FROM generate_series(1, 50);
 ```
 
-Open <http://127.0.0.1:4173> for the Vite dev server.
-
-For a self-hosted frontend build served by the Rust control plane, in `apps/web/` run:
+### 5. Run an end-to-end snapshot
 
 ```bash
-npm install
-npm run build
-```
-
-Then open <http://127.0.0.1:8080> after starting `cargo run -p astra-control-plane`.
-
-If `ASTRA_DATABASE_URL` points at a reachable Postgres instance, the control plane now persists applied pipeline specs and pipeline summaries there. If not, it falls back to in-memory storage so local hacking still works instead of faceplanting.
-
-For the self-hosted Postgres source skeleton, start the local stack with Podman Compose, export the source password if your YAML uses `passwordRef: env:POSTGRES_PASSWORD`, then run:
-
-```bash
-export POSTGRES_PASSWORD=astra
-cargo run -p astra -- discover-source examples/postgres-to-warehouse.astra.yaml
-```
-
-That currently does the minimum useful thing: parse and validate the Postgres source config, inspect table schemas from a reachable Postgres instance, and emit a snapshot-oriented SQL plan for the captured tables.
-
-CDC is still not executable in this skeleton. If a spec uses `pipeline.mode: cdc` or `source.capture.cdc`, `astra apply` and the control-plane apply API now reject it instead of pretending the runtime exists.
-
-There is also a first honest execution slice for local/self-hosted development:
-
-```bash
-export POSTGRES_PASSWORD=...
-export ASTRA_STAGING_LOCAL_ROOT=.astra/staging
-cargo run -p astra -- snapshot-to-local-staging examples/postgres-to-warehouse.astra.yaml --max-rows-per-table 1000
-```
-
-That flow now does the first non-hand-wavy useful slice: it can paginate snapshot reads into multiple staged JSONL.gz chunks, persist a local checkpoint ledger under `.astra/checkpoints`, and resume from the next unfinished chunk on rerun. The implementation is still intentionally local-first and narrow: offset-based chunk pagination for Podman/dev workflows, no sink apply yet, and no fake cloud dependencies.
-
-Example:
-
-```bash
-export POSTGRES_PASSWORD=...
+export ASTRA_SMOKE_PG_PASSWORD=astra
 export ASTRA_STAGING_LOCAL_ROOT=.astra/staging
 export ASTRA_CHECKPOINT_LOCAL_ROOT=.astra/checkpoints
-cargo run -p astra -- snapshot-to-local-staging examples/postgres-to-warehouse.astra.yaml --chunk-size 5000
+
+cargo run -p astra -- execute-local-snapshot \
+  examples/smoke-local-snapshot.astra.yaml \
+  --control-plane-url http://127.0.0.1:8080
 ```
 
-Useful flags:
-
-- `--chunk-size <rows>` overrides `source.capture.snapshot.chunkSize`
-- `--checkpoint-root <dir>` changes where the local resume ledger is stored
-- `--no-resume` ignores any existing ledger and starts from chunk sequence 0 again
-
-There is now a matching narrow-but-real destination leg for local/self-hosted Postgres raw loading:
+### 6. Verify
 
 ```bash
-export POSTGRES_PASSWORD=...
-export WAREHOUSE_PASSWORD=...
-export ASTRA_STAGING_LOCAL_ROOT=.astra/staging
-cargo run -p astra -- snapshot-to-local-staging examples/postgres-to-postgres-raw.astra.yaml --max-rows-per-table 1000
-cargo run -p astra -- load-local-staging-to-postgres examples/postgres-to-postgres-raw.astra.yaml
+psql postgres://astra:astra@localhost:5432/astra \
+  -c "SELECT COUNT(*) FROM astra_raw.raw_public_smoke_users;"
+# expect: 20
+
+psql postgres://astra:astra@localhost:5432/astra \
+  -c "SELECT COUNT(*) FROM astra_raw.raw_public_smoke_orders;"
+# expect: 50
 ```
 
-If you want one boring command that runs that same local happy path end to end, use:
+Check run history in the UI or via API:
 
 ```bash
-export POSTGRES_PASSWORD=...
-export WAREHOUSE_PASSWORD=...
-export ASTRA_STAGING_LOCAL_ROOT=.astra/staging
-export ASTRA_CHECKPOINT_LOCAL_ROOT=.astra/checkpoints
-cargo run -p astra -- execute-local-snapshot examples/postgres-to-postgres-raw.astra.yaml --max-rows-per-table 1000
+curl http://127.0.0.1:8080/api/v1/pipelines
+curl http://127.0.0.1:8080/api/v1/pipelines/smoke-local-snapshot/run-history
 ```
 
-`execute-local-snapshot` is intentionally narrow and honest: it orchestrates the existing `snapshot-to-local-staging` and `load-local-staging-to-postgres` commands, prints stage-level progress, and currently supports the local Postgres-source to Postgres-destination slice only.
+---
 
-The loader reads staged `JSONL.gz` chunks and lands them in raw Postgres tables (default schema `astra_raw`) with one `jsonb` payload column plus loader metadata. It also records applied chunk object keys so reruns skip already-loaded chunks instead of duplicating them like idiots.
+## CLI commands
 
-If you want the same flow against a local MinIO bucket instead of the filesystem, bring up the Podman Compose stack and run:
+| Command | What it does |
+|---------|-------------|
+| `validate` | Parse and validate a YAML spec |
+| `discover-source` | Enumerate Postgres tables, columns, and primary keys |
+| `snapshot-to-local-staging` | Snapshot Postgres tables to local JSONL.gz chunks |
+| `snapshot-to-minio-staging` | Snapshot Postgres tables to MinIO/S3 chunks |
+| `load-local-staging-to-postgres` | Load locally staged chunks into Postgres raw destination |
+| `execute-local-snapshot` | End-to-end: snapshot → local staging → Postgres load |
+
+## Control plane API
+
+All endpoints under `/api/v1/`. Key ones:
+
+| Endpoint | Purpose |
+|----------|---------|
+| `GET /pipelines` | List registered pipelines |
+| `POST /specs/apply` | Register or update a pipeline spec |
+| `GET /pipelines/:name/run-history` | Paginated run history |
+| `GET /pipeline-runs/:id/table-executions` | Per-table status and row counts |
+
+## Architecture
+
+Rust-first modular monolith. Single control-plane binary, Postgres for metadata, S3/MinIO for durable staging.
+
+```
+apps/control-plane   Axum HTTP API + scheduler + metadata
+apps/cli             Clap CLI
+apps/web             React 18 + TypeScript + Vite
+crates/astra-yaml    YAML spec parsing/validation (v1alpha1)
+crates/astra-runtime Staging — local, S3, MinIO; chunked JSONL.gz
+crates/astra-connectors  Postgres source + destination
+```
+
+See [`docs/v0.1-SCOPE.md`](docs/v0.1-SCOPE.md) for what is and isn't implemented, and [`docs/architecture/rfc-0001-v1-architecture.md`](docs/architecture/rfc-0001-v1-architecture.md) for the full architecture RFC.
+
+## Development
 
 ```bash
-export POSTGRES_PASSWORD=astra
-export ASTRA_S3_ENDPOINT=http://127.0.0.1:9000
-export ASTRA_S3_REGION=us-east-1
-export ASTRA_S3_ACCESS_KEY=astra
-export ASTRA_S3_SECRET_KEY=astrastorage
-cargo run -p astra -- snapshot-to-minio-staging examples/postgres-to-warehouse.astra.yaml --max-rows-per-table 1000
+cargo test --workspace          # run all tests
+cargo clippy --workspace        # lint
+cd apps/web && npm run dev      # Vite dev server at 127.0.0.1:4173
+python3 scripts/e2e_snapshot_smoke.py  # end-to-end smoke test
 ```
 
-That uses the same staging contract and object-key layout, just backed by a MinIO/S3-compatible adapter instead of local files. Same chunks, less pretending.
-
-The shell is intentionally lightweight and the React + TypeScript follow-up is tracked in issue #26.
-
-## Status
-
-Repo scaffold and planning docs have been initialized. The next real move is implementation, not more slideware.
+Copy `.env.example` to `.env` for a full reference of environment variables.
