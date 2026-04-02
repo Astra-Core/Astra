@@ -10,6 +10,7 @@ pub const CRATE_NAME: &str = "astra-metadata";
 pub enum PipelineStatus {
     Draft,
     Active,
+    Disabled,
     Paused,
     Failed,
     Archived,

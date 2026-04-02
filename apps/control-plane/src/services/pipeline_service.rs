@@ -302,6 +302,38 @@ impl PipelineService {
         self.repository.get_pipeline_yaml(pipeline_name).await
     }
 
+    pub async fn delete_pipeline(&self, pipeline_name: &str) -> anyhow::Result<()> {
+        self.repository.delete_pipeline(pipeline_name).await
+    }
+
+    pub async fn update_pipeline_status(
+        &self,
+        pipeline_name: &str,
+        status: &str,
+    ) -> anyhow::Result<PipelineSummaryResponse> {
+        const VALID_STATUSES: &[&str] = &[
+            "draft", "active", "disabled", "paused", "failed", "archived",
+        ];
+        if !VALID_STATUSES.contains(&status) {
+            anyhow::bail!(
+                "invalid pipeline status '{}'; must be one of: {}",
+                status,
+                VALID_STATUSES.join(", ")
+            );
+        }
+        let record = self
+            .repository
+            .update_pipeline_status(pipeline_name, status)
+            .await?;
+        Ok(PipelineSummaryResponse {
+            name: record.name,
+            source_kind: record.source_kind,
+            destination_kind: record.destination_kind,
+            status: record.status,
+            spec_version: record.spec_version,
+        })
+    }
+
     pub async fn update_pipeline_run_status(
         &self,
         run_id: Uuid,

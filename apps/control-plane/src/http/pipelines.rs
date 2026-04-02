@@ -9,6 +9,7 @@ use crate::{
 };
 use axum::{
     extract::{Path, State},
+    http::StatusCode,
     Json,
 };
 use uuid::Uuid;
@@ -199,4 +200,37 @@ pub async fn upsert_table_execution(
         .upsert_table_execution(pipeline_run_id, request)
         .await?;
     Ok(Json(response))
+}
+
+pub async fn delete_pipeline(
+    State(state): State<AppState>,
+    Path(pipeline_name): Path<String>,
+) -> Result<StatusCode, AppError> {
+    state
+        .pipeline_service
+        .delete_pipeline(&pipeline_name)
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn disable_pipeline(
+    State(state): State<AppState>,
+    Path(pipeline_name): Path<String>,
+) -> Result<Json<crate::models::api::PipelineSummaryResponse>, AppError> {
+    let pipeline = state
+        .pipeline_service
+        .update_pipeline_status(&pipeline_name, "disabled")
+        .await?;
+    Ok(Json(pipeline))
+}
+
+pub async fn enable_pipeline(
+    State(state): State<AppState>,
+    Path(pipeline_name): Path<String>,
+) -> Result<Json<crate::models::api::PipelineSummaryResponse>, AppError> {
+    let pipeline = state
+        .pipeline_service
+        .update_pipeline_status(&pipeline_name, "active")
+        .await?;
+    Ok(Json(pipeline))
 }

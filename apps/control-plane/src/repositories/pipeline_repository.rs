@@ -156,4 +156,10 @@ pub trait PipelineRepository: Send + Sync {
         &self,
         record: UpsertTableExecutionRecord,
     ) -> anyhow::Result<TableExecutionRecord>;
+    async fn delete_pipeline(&self, pipeline_name: &str) -> anyhow::Result<()>;
+    async fn update_pipeline_status(
+        &self,
+        pipeline_name: &str,
+        status: &str,
+    ) -> anyhow::Result<PipelineRecord>;
 }

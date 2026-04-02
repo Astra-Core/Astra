@@ -124,3 +124,89 @@ runtime:
 
     Ok(())
 }
+
+#[tokio::test]
+async fn delete_and_disable_pipeline_via_service() -> Result<()> {
+    let repository = Arc::new(InMemoryPipelineRepository::default());
+    let service = PipelineService::new(repository);
+
+    let yaml = r#"
+version: v1alpha1
+pipeline:
+  name: test-lifecycle-pipeline
+  mode: snapshot
+  schedule: manual
+source:
+  kind: postgres
+  connection:
+    host: localhost
+    port: 5432
+    database: astra
+    username: astra
+    passwordRef: env:POSTGRES_PASSWORD
+  capture:
+    tables:
+      - public.orders
+    snapshot:
+      mode: full
+destination:
+  kind: postgres
+  connection:
+    host: localhost
+    port: 5432
+    database: astra
+    username: astra
+    passwordRef: env:POSTGRES_PASSWORD
+    schema: astra
+  staging:
+    kind: local
+    bucket: astra-staging
+    prefix: test-lifecycle-pipeline/
+  write:
+    mode: append
+runtime:
+  parallelism:
+    tables: 1
+"#;
+
+    service.apply_spec(yaml.to_string(), None).await?;
+
+    // Verify it exists and is active
+    let pipelines = service.list_pipelines().await?;
+    assert!(pipelines
+        .iter()
+        .any(|p| p.name == "test-lifecycle-pipeline" && p.status == "active"));
+
+    // Disable it
+    let disabled = service
+        .update_pipeline_status("test-lifecycle-pipeline", "disabled")
+        .await?;
+    assert_eq!(disabled.status, "disabled");
+
+    // Re-enable it
+    let enabled = service
+        .update_pipeline_status("test-lifecycle-pipeline", "active")
+        .await?;
+    assert_eq!(enabled.status, "active");
+
+    // Disabling a non-existent pipeline returns an error
+    let err = service
+        .update_pipeline_status("no-such-pipeline", "disabled")
+        .await;
+    assert!(err.is_err());
+
+    // Delete the pipeline
+    service.delete_pipeline("test-lifecycle-pipeline").await?;
+
+    // Verify it's gone
+    let pipelines_after = service.list_pipelines().await?;
+    assert!(!pipelines_after
+        .iter()
+        .any(|p| p.name == "test-lifecycle-pipeline"));
+
+    // Deleting a non-existent pipeline returns an error
+    let delete_err = service.delete_pipeline("test-lifecycle-pipeline").await;
+    assert!(delete_err.is_err());
+
+    Ok(())
+}

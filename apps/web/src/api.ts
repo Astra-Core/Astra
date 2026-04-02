@@ -2,6 +2,7 @@ import type {
   ApplySpecResponse,
   PipelineRunsResponse,
   PipelinesResponse,
+  PipelineSummaryResponse,
   TableExecutionsResponse,
 } from '@/types';
 
@@ -40,4 +41,36 @@ export async function applySpec(yaml: string, createdBy: string): Promise<ApplyS
     throw new Error(errorText || `Apply failed with status ${res.status}`);
   }
   return res.json() as Promise<ApplySpecResponse>;
+}
+
+export async function deletePipeline(pipelineName: string): Promise<void> {
+  const res = await fetch(`/api/v1/pipelines/${encodeURIComponent(pipelineName)}`, {
+    method: 'DELETE',
+  });
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(errorText || `Delete failed with status ${res.status}`);
+  }
+}
+
+export async function disablePipeline(pipelineName: string): Promise<PipelineSummaryResponse> {
+  const res = await fetch(`/api/v1/pipelines/${encodeURIComponent(pipelineName)}/disable`, {
+    method: 'POST',
+  });
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(errorText || `Disable failed with status ${res.status}`);
+  }
+  return res.json() as Promise<PipelineSummaryResponse>;
+}
+
+export async function enablePipeline(pipelineName: string): Promise<PipelineSummaryResponse> {
+  const res = await fetch(`/api/v1/pipelines/${encodeURIComponent(pipelineName)}/enable`, {
+    method: 'POST',
+  });
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(errorText || `Enable failed with status ${res.status}`);
+  }
+  return res.json() as Promise<PipelineSummaryResponse>;
 }

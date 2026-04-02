@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { Pipeline, RunHistoryState, TableExecutionState } from '@/types';
-import { fetchPipelines, fetchRunHistory, fetchTableExecutions } from '@/api';
+import { fetchPipelines, fetchRunHistory, fetchTableExecutions, deletePipeline, disablePipeline, enablePipeline } from '@/api';
 import { formatDuration, formatTimestamp, formatRowProgress, runStatusVariant, tableStatusVariant } from '@/utils';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -17,6 +17,7 @@ export function PipelineList({ refreshToken }: Props) {
   const [runHistories, setRunHistories] = useState<Record<string, RunHistoryState>>({});
   const [expandedRuns, setExpandedRuns] = useState<Set<string>>(new Set());
   const [tableExecutions, setTableExecutions] = useState<Record<string, TableExecutionState>>({});
+  const [actionLoading, setActionLoading] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     let cancelled = false;
@@ -100,6 +101,46 @@ export function PipelineList({ refreshToken }: Props) {
     });
   }
 
+  function handleToggleStatus(pipeline: Pipeline) {
+    const key = `status-${pipeline.name}`;
+    setActionLoading((a) => ({ ...a, [key]: true }));
+    const action = pipeline.status === 'disabled' ? enablePipeline : disablePipeline;
+    action(pipeline.name)
+      .then((updated) => {
+        setPipelines((prev) =>
+          prev.map((p) => (p.name === updated.name ? { ...p, status: updated.status } : p))
+        );
+      })
+      .catch(() => {
+        // Refresh list on error to get accurate state
+        setLocalRefresh((n) => n + 1);
+      })
+      .finally(() => {
+        setActionLoading((a) => ({ ...a, [key]: false }));
+      });
+  }
+
+  function handleDelete(pipelineName: string) {
+    if (!window.confirm(`Delete pipeline "${pipelineName}"? This cannot be undone.`)) return;
+    const key = `delete-${pipelineName}`;
+    setActionLoading((a) => ({ ...a, [key]: true }));
+    deletePipeline(pipelineName)
+      .then(() => {
+        setPipelines((prev) => prev.filter((p) => p.name !== pipelineName));
+        setExpandedPipelines((prev) => {
+          const next = new Set(prev);
+          next.delete(pipelineName);
+          return next;
+        });
+      })
+      .catch(() => {
+        setLocalRefresh((n) => n + 1);
+      })
+      .finally(() => {
+        setActionLoading((a) => ({ ...a, [key]: false }));
+      });
+  }
+
   return (
     <Card>
       <CardHeader className="flex-row items-center justify-between space-y-0">
@@ -122,6 +163,9 @@ export function PipelineList({ refreshToken }: Props) {
             {pipelines.map((pipeline) => {
               const isExpanded = expandedPipelines.has(pipeline.name);
               const history = runHistories[pipeline.name];
+              const isDisabled = pipeline.status === 'disabled';
+              const statusLoading = actionLoading[`status-${pipeline.name}`] ?? false;
+              const deleteLoading = actionLoading[`delete-${pipeline.name}`] ?? false;
 
               return (
                 <div key={`${pipeline.name}-${pipeline.spec_version}`}>
@@ -143,6 +187,22 @@ export function PipelineList({ refreshToken }: Props) {
                         onClick={() => handleToggleRuns(pipeline.name)}
                       >
                         {isExpanded ? 'Hide runs' : 'View runs'}
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={statusLoading}
+                        onClick={() => handleToggleStatus(pipeline)}
+                      >
+                        {isDisabled ? 'Enable' : 'Disable'}
+                      </Button>
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        disabled={deleteLoading}
+                        onClick={() => handleDelete(pipeline.name)}
+                      >
+                        Delete
                       </Button>
                     </div>
                   </div>

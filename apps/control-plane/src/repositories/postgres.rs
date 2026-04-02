@@ -1,7 +1,10 @@
-use crate::repositories::{
-    AppliedPipelineRecord, CreatePipelineRunRecord, PipelineRecord, PipelineRepository,
-    PipelineRunRecord, RecordStagedArtifactRecord, StagedArtifactRecord, TableExecutionRecord,
-    UpsertTableExecutionRecord,
+use crate::{
+    error::NotFoundError,
+    repositories::{
+        AppliedPipelineRecord, CreatePipelineRunRecord, PipelineRecord, PipelineRepository,
+        PipelineRunRecord, RecordStagedArtifactRecord, StagedArtifactRecord, TableExecutionRecord,
+        UpsertTableExecutionRecord,
+    },
 };
 use anyhow::Context;
 use async_trait::async_trait;
@@ -608,6 +611,55 @@ impl PipelineRepository for PostgresPipelineRepository {
         .with_context(|| format!("failed to upsert table execution for run '{}' table '{}'", record.pipeline_run_id, record.stream_name))?;
 
         Ok(map_table_execution_row(row))
+    }
+
+    async fn delete_pipeline(&self, pipeline_name: &str) -> anyhow::Result<()> {
+        let rows_affected = self
+            .client
+            .lock()
+            .await
+            .execute("DELETE FROM pipelines WHERE name = $1", &[&pipeline_name])
+            .await
+            .with_context(|| format!("failed to delete pipeline '{}'", pipeline_name))?;
+
+        if rows_affected == 0 {
+            return Err(anyhow::Error::new(NotFoundError(pipeline_name.to_string())));
+        }
+        Ok(())
+    }
+
+    async fn update_pipeline_status(
+        &self,
+        pipeline_name: &str,
+        status: &str,
+    ) -> anyhow::Result<PipelineRecord> {
+        let row = self
+            .client
+            .lock()
+            .await
+            .query_opt(
+                r#"
+                UPDATE pipelines
+                SET status = $1, updated_at = NOW()
+                WHERE name = $2
+                RETURNING name, source_kind, destination_kind, status,
+                          (SELECT version FROM pipeline_specs WHERE id = active_spec_id) AS spec_version
+                "#,
+                &[&status, &pipeline_name],
+            )
+            .await
+            .with_context(|| format!("failed to update status for pipeline '{}'", pipeline_name))?;
+
+        match row {
+            Some(r) => Ok(PipelineRecord {
+                name: r.get("name"),
+                source_kind: r.get("source_kind"),
+                destination_kind: r.get("destination_kind"),
+                status: r.get("status"),
+                spec_version: r.get::<_, Option<i32>>("spec_version").unwrap_or(0),
+            }),
+            None => Err(anyhow::Error::new(NotFoundError(pipeline_name.to_string()))),
+        }
     }
 }
 
