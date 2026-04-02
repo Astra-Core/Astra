@@ -158,10 +158,3 @@ pub struct UpsertTableExecutionRequest {
     pub checkpoint_completed: Option<bool>,
 }
 
-pub enum RunStatus {
-    Pending,
-    Running,
-    Succeeded,
-    Failed,
-    Cancelled,
-}
