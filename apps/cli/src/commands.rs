@@ -208,7 +208,7 @@ pub async fn snapshot_to_local_staging(
         if let (Some(control_plane), Some(run_id)) = (&control_plane, run_id.as_deref()) {
             control_plane
                 .record_staged_artifact(
-                    &run_id,
+                    run_id,
                     &table.table,
                     "default",
                     table.sequence.try_into().context("sequence overflow")?,
@@ -221,7 +221,7 @@ pub async fn snapshot_to_local_staging(
                 .await?;
             control_plane
                 .upsert_table_execution(
-                    &run_id,
+                    run_id,
                     &table.table,
                     "staged",
                     chunk.row_count as i64,
@@ -259,7 +259,7 @@ pub async fn snapshot_to_local_staging(
         if let (Some(control_plane), Some(run_id)) = (&control_plane, run_id.as_deref()) {
             control_plane
                 .upsert_table_execution(
-                    &run_id,
+                    run_id,
                     &progress.table,
                     if progress.finished {
                         "snapshot_complete"
@@ -310,7 +310,7 @@ pub async fn snapshot_to_local_staging(
             .sum();
         control_plane
             .update_run_status(
-                &run_id,
+                run_id,
                 "succeeded",
                 Some(json!({
                     "tables_completed": tables_completed,
@@ -511,9 +511,9 @@ pub async fn load_local_staging_to_postgres(
         if let (Some(control_plane), Some(run_id)) = (&control_plane, run_id.as_deref()) {
             control_plane
                 .upsert_table_execution(
-                    &run_id,
+                    run_id,
                     &chunk.table_name,
-                    if chunk.skipped { "applied" } else { "applied" },
+                    "applied",
                     chunk.rows_written as i64,
                     Some(chunk.rows_written as i64),
                     None,
@@ -545,7 +545,7 @@ pub async fn load_local_staging_to_postgres(
             .sum();
         control_plane
             .update_run_status(
-                &run_id,
+                run_id,
                 "succeeded",
                 Some(json!({
                     "chunks_applied": report.applied_chunks.len(),
@@ -706,6 +706,7 @@ impl ControlPlaneClient {
             .context("control-plane create_pipeline_run response missing id")
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn record_staged_artifact(
         &self,
         run_id: &str,
@@ -741,6 +742,7 @@ impl ControlPlaneClient {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn upsert_table_execution(
         &self,
         run_id: &str,

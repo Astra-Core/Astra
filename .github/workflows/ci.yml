@@ -36,6 +36,18 @@ jobs:
         run: cargo fmt --all --check
       - name: Check Rust workspace buildability
         run: cargo check --workspace
+      - name: Lint with Clippy
+        run: cargo clippy --workspace -- -D warnings
+
+  rust-tests:
+    name: Rust tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install stable Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Run workspace tests
+        run: cargo test --workspace
 
   web-foundation:
     name: Web foundation

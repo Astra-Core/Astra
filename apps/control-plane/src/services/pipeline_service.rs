@@ -155,6 +155,7 @@ impl PipelineService {
             .collect())
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn record_staged_artifact(
         &self,
         pipeline_run_id: Uuid,
