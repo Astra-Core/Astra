@@ -1,8 +1,14 @@
+import path from 'path';
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
 export default defineConfig({
   plugins: [react()],
+  resolve: {
+    alias: {
+      '@': path.resolve(__dirname, './src'),
+    },
+  },
   server: {
     host: '127.0.0.1',
     port: 4173,
@@ -10,11 +16,11 @@ export default defineConfig({
       '/api': 'http://127.0.0.1:8080',
       '/health': 'http://127.0.0.1:8080',
       '/ready': 'http://127.0.0.1:8080',
-      '/version': 'http://127.0.0.1:8080'
-    }
+      '/version': 'http://127.0.0.1:8080',
+    },
   },
   preview: {
     host: '127.0.0.1',
-    port: 4173
-  }
+    port: 4173,
+  },
 });
