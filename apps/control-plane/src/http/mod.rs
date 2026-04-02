@@ -16,7 +16,16 @@ pub fn routes() -> Router<AppState> {
         .route("/api/v1/pipelines", get(pipelines::list_pipelines))
         .route(
             "/api/v1/pipelines/:pipeline_name",
-            get(pipelines::get_pipeline_yaml),
+            get(pipelines::get_pipeline_yaml)
+                .delete(pipelines::delete_pipeline),
+        )
+        .route(
+            "/api/v1/pipelines/:pipeline_name/disable",
+            post(pipelines::disable_pipeline),
+        )
+        .route(
+            "/api/v1/pipelines/:pipeline_name/enable",
+            post(pipelines::enable_pipeline),
         )
         .route(
             "/api/v1/pipelines/:pipeline_name/runs",

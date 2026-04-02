@@ -222,6 +222,26 @@ runtime:
     assert_eq!(updated_cancel.status, "cancelled");
     assert!(updated_cancel.finished_at.is_some());
 
+    // Test disable / enable (update_pipeline_status)
+    let disabled = repo3
+        .update_pipeline_status(&pipeline_name, "disabled")
+        .await?;
+    assert_eq!(disabled.status, "disabled");
+
+    let enabled = repo3
+        .update_pipeline_status(&pipeline_name, "active")
+        .await?;
+    assert_eq!(enabled.status, "active");
+
+    // Test delete_pipeline removes the pipeline and cascades
+    repo3.delete_pipeline(&pipeline_name).await?;
+    let pipelines_after = repo3.list_pipelines().await?;
+    assert!(!pipelines_after.iter().any(|p| p.name == pipeline_name));
+
+    // Deleting again should return an error
+    let delete_err = repo3.delete_pipeline(&pipeline_name).await;
+    assert!(delete_err.is_err());
+
     Ok(())
 }
 

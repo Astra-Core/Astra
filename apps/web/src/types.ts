@@ -8,6 +8,8 @@ export type Pipeline = {
   spec_version: number;
 };
 
+export type PipelineSummaryResponse = Pipeline;
+
 export type PipelinesResponse = {
   pipelines: Pipeline[];
 };

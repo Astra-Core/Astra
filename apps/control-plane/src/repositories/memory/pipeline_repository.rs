@@ -1,7 +1,10 @@
-use crate::repositories::{
-    AppliedPipelineRecord, CreatePipelineRunRecord, PipelineRecord, PipelineRepository,
-    PipelineRunRecord, RecordStagedArtifactRecord, StagedArtifactRecord, TableExecutionRecord,
-    UpsertTableExecutionRecord,
+use crate::{
+    error::NotFoundError,
+    repositories::{
+        AppliedPipelineRecord, CreatePipelineRunRecord, PipelineRecord, PipelineRepository,
+        PipelineRunRecord, RecordStagedArtifactRecord, StagedArtifactRecord, TableExecutionRecord,
+        UpsertTableExecutionRecord,
+    },
 };
 use anyhow::anyhow;
 use async_trait::async_trait;
@@ -336,6 +339,48 @@ impl PipelineRepository for InMemoryPipelineRepository {
         };
 
         Ok(table)
+    }
+
+    async fn delete_pipeline(&self, pipeline_name: &str) -> anyhow::Result<()> {
+        let mut guard = self.inner.write().await;
+        if guard.remove(pipeline_name).is_none() {
+            return Err(anyhow::Error::new(NotFoundError(pipeline_name.to_string())));
+        }
+        drop(guard);
+
+        // Collect run IDs belonging to this pipeline and remove associated data.
+        let run_ids: Vec<Uuid> = {
+            let runs = self.runs.read().await;
+            runs.values()
+                .filter(|r| r.pipeline_name == pipeline_name)
+                .map(|r| r.id)
+                .collect()
+        };
+        let mut runs = self.runs.write().await;
+        let mut artifacts = self.artifacts.write().await;
+        let mut table_executions = self.table_executions.write().await;
+        for id in &run_ids {
+            runs.remove(id);
+            artifacts.remove(id);
+            table_executions.remove(id);
+        }
+        Ok(())
+    }
+
+    async fn update_pipeline_status(
+        &self,
+        pipeline_name: &str,
+        status: &str,
+    ) -> anyhow::Result<PipelineRecord> {
+        let mut guard = self.inner.write().await;
+        match guard.get_mut(pipeline_name) {
+            Some(stored) => {
+                stored.record.status = status.to_string();
+                stored.updated_at = Utc::now();
+                Ok(stored.record.clone())
+            }
+            None => Err(anyhow::Error::new(NotFoundError(pipeline_name.to_string()))),
+        }
     }
 }
 
