@@ -1,7 +1,11 @@
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use bytes::Bytes;
-use object_store::{aws::{AmazonS3, AmazonS3Builder}, path::Path as ObjectPath, ObjectStoreExt};
+use object_store::{
+    aws::{AmazonS3, AmazonS3Builder},
+    path::Path as ObjectPath,
+    ObjectStoreExt,
+};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
@@ -121,7 +125,10 @@ impl MinioStagingConfig {
         let url = format!("{}/{}", self.endpoint.trim_end_matches('/'), bucket);
         let resp = reqwest::Client::new()
             .put(&url)
-            .header("x-amz-content-sha256", "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+            .header(
+                "x-amz-content-sha256",
+                "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            )
             .send()
             .await
             .with_context(|| format!("failed to reach MinIO at {url}"))?;
@@ -396,15 +403,12 @@ impl StageChunkStore for MinioStageChunkStore {
         ensure_chunk_belongs_to_bucket(&self.config.storage.bucket, chunk)?;
         let store = self.config.object_store(&chunk.bucket)?;
         let path = ObjectPath::from(chunk.object_key.as_str());
-        let result = store
-            .get(&path)
-            .await
-            .with_context(|| {
-                format!(
-                    "failed to read staged chunk from s3://{}/{} via {}",
-                    chunk.bucket, chunk.object_key, self.config.endpoint
-                )
-            })?;
+        let result = store.get(&path).await.with_context(|| {
+            format!(
+                "failed to read staged chunk from s3://{}/{} via {}",
+                chunk.bucket, chunk.object_key, self.config.endpoint
+            )
+        })?;
         result
             .bytes()
             .await
