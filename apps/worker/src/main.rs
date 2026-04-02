@@ -4,7 +4,7 @@ use reqwest::Client;
 use serde_json::{json, Value};
 use std::time::{Duration, Instant};
 use tokio::time::sleep;
-use tracing::{error, info};
+use tracing::info;
 use uuid::Uuid;
 
 #[derive(Parser)]
@@ -62,7 +62,7 @@ async fn main() -> anyhow::Result<()> {
     println!("Running...");
 
     let start_time = Instant::now();
-    let stages = vec![
+    let stages = [
         ("Planning", Duration::from_secs(1)),
         ("Snapshot", Duration::from_secs(3)),
         ("StageFlush", Duration::from_secs(2)),
