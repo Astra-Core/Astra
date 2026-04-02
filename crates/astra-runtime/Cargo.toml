@@ -14,6 +14,6 @@ serde_json.workspace = true
 anyhow.workspace = true
 tokio.workspace = true
 async-trait = "0.1"
-aws-config = "1"
+aws-config = { version = "1", default-features = false, features = ["rt-tokio", "behavior-version-latest"] }
 aws-credential-types = "1"
-aws-sdk-s3 = "1"
+aws-sdk-s3 = { version = "1", default-features = false, features = ["rt-tokio", "sigv4a", "http-1x", "rustls"] }
