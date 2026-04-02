@@ -8,6 +8,7 @@ use crate::{
     repositories::RecordStagedArtifactRecord,
     state::AppState,
 };
+use astra_metadata::PipelineStatus;
 use axum::{
     extract::{Path, State},
     http::StatusCode,
@@ -222,7 +223,7 @@ pub async fn disable_pipeline(
 ) -> Result<Json<crate::models::api::PipelineSummaryResponse>, AppError> {
     let pipeline = state
         .pipeline_service
-        .update_pipeline_status(&pipeline_name, "disabled")
+        .update_pipeline_status(&pipeline_name, PipelineStatus::Disabled)
         .await?;
     Ok(Json(pipeline))
 }
@@ -233,7 +234,7 @@ pub async fn enable_pipeline(
 ) -> Result<Json<crate::models::api::PipelineSummaryResponse>, AppError> {
     let pipeline = state
         .pipeline_service
-        .update_pipeline_status(&pipeline_name, "active")
+        .update_pipeline_status(&pipeline_name, PipelineStatus::Active)
         .await?;
     Ok(Json(pipeline))
 }

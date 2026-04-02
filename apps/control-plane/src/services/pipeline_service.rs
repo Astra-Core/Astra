@@ -8,6 +8,7 @@ use crate::{
         UpsertTableExecutionRecord,
     },
 };
+use astra_metadata::PipelineStatus;
 use chrono::Utc;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -29,7 +30,7 @@ impl PipelineService {
                 name: p.name,
                 source_kind: p.source_kind,
                 destination_kind: p.destination_kind,
-                status: p.status,
+                status: p.status.to_string(),
                 spec_version: p.spec_version,
             })
             .collect())
@@ -284,18 +285,8 @@ impl PipelineService {
     pub async fn update_pipeline_status(
         &self,
         pipeline_name: &str,
-        status: &str,
+        status: PipelineStatus,
     ) -> anyhow::Result<PipelineSummaryResponse> {
-        const VALID_STATUSES: &[&str] = &[
-            "draft", "active", "disabled", "paused", "failed", "archived",
-        ];
-        if !VALID_STATUSES.contains(&status) {
-            anyhow::bail!(
-                "invalid pipeline status '{}'; must be one of: {}",
-                status,
-                VALID_STATUSES.join(", ")
-            );
-        }
         let record = self
             .repository
             .update_pipeline_status(pipeline_name, status)
@@ -304,7 +295,7 @@ impl PipelineService {
             name: record.name,
             source_kind: record.source_kind,
             destination_kind: record.destination_kind,
-            status: record.status,
+            status: record.status.to_string(),
             spec_version: record.spec_version,
         })
     }
