@@ -834,7 +834,7 @@ runtime: {}
         let max = values
             .iter()
             .filter(|v| !v.is_null())
-            .max_by(compare_cursor_values)
+            .max_by(|a, b| compare_cursor_values(*a, *b))
             .cloned();
         assert_eq!(max, Some(serde_json::json!("2024-06-01T00:00:00Z")));
 
@@ -847,7 +847,7 @@ runtime: {}
         let max_num = nums
             .iter()
             .filter(|v| !v.is_null())
-            .max_by(compare_cursor_values)
+            .max_by(|a, b| compare_cursor_values(*a, *b))
             .cloned();
         assert_eq!(max_num, Some(serde_json::json!(99)));
 
