@@ -9,10 +9,10 @@ const config = {
   favicon: 'img/favicon.ico',
 
   url: 'https://astra-core.github.io',
-  baseUrl: '/',
+  baseUrl: '/Astra/',
 
   organizationName: 'astra-core',
-  projectName: 'astra-core.github.io',
+  projectName: 'Astra',
   deploymentBranch: 'gh-pages',
   trailingSlash: false,
 
