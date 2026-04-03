@@ -27,27 +27,18 @@ Community and long-tail connectors will run as bounded subprocesses (Python 3). 
 
 The Python runtime (`crates/astra-python-runtime`) is scaffolded but not yet implemented. Connector manifests and the subprocess protocol are defined in `crates/astra-saas-sdk`.
 
-## Connector interface
+## How connectors are structured
 
-Every source connector implements the `SourceConnector` trait:
+The Postgres source is implemented as `PostgresSource` in `crates/astra-connectors`. Key methods:
 
-```rust
-// crates/astra-connectors
-pub trait SourceConnector {
-    async fn discover(&self, config: &SourceConfig) -> Result<Schema>;
-    async fn snapshot(&self, config: &SourceConfig, stream: &StreamConfig)
-        -> Result<impl Stream<Item = Result<RecordBatch>>>;
-}
-```
+- `from_spec(spec: &AstraSpec)` — constructs the connector from a parsed YAML spec
+- `discover()` — queries the source database and returns the schema of all captured tables
+- `snapshot_to_jsonl_gzip()` — paginates rows and writes compressed JSONL.gz chunks to staging
 
-Every destination connector implements the `DestinationConnector` trait:
+The Postgres destination is implemented as `PostgresDestinationLoader`. Key methods:
 
-```rust
-pub trait DestinationConnector {
-    async fn load(&self, config: &DestinationConfig, chunks: impl Iterator<Item = StagedChunk>)
-        -> Result<LoadResult>;
-}
-```
+- `from_spec(spec: &AstraSpec)` — constructs the loader from a parsed YAML spec
+- `load_local_stage_chunks()` — reads staged JSONL.gz chunks and bulk-inserts them into `astra_raw`
 
 ## Staging format
 
@@ -55,7 +46,17 @@ Between capture and load, data is stored as compressed JSONL:
 
 - One JSON object per row
 - Compressed with gzip
-- Chunks named `<sequence>.jsonl.gz`
-- Stored at `pipelines/<name>/streams/<stream>/partitions/<partition>/chunks/<seq>.jsonl.gz`
+- Sequence number zero-padded to 20 digits
+- Stored at the following path:
+
+```
+pipelines/<pipeline_name>/streams/<stream_name>/partitions/<partition_key>/chunks/<sequence:020>.jsonl.gz
+```
+
+**Example:**
+
+```
+pipelines/smoke-local-snapshot/streams/public.smoke_users/partitions/default/chunks/00000000000000000001.jsonl.gz
+```
 
 See [Staging Contract →](../architecture/staging-contract.md) for the full spec.

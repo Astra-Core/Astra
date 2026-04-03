@@ -23,6 +23,26 @@ Default bind address: `127.0.0.1:8080`. Override with `ASTRA_CONTROL_PLANE_ADDR`
 
 ---
 
+## Health and meta
+
+### `GET /`
+
+Returns a welcome message. Used to verify the server is up.
+
+### `GET /health`
+
+Health check endpoint.
+
+### `GET /ready`
+
+Readiness check — returns 200 when the server is ready to handle requests.
+
+### `GET /version`
+
+Returns the server version string.
+
+---
+
 ## Pipelines
 
 ### `GET /api/v1/pipelines`
@@ -34,7 +54,6 @@ List all registered pipelines.
 ```json
 [
   {
-    "id": "550e8400-e29b-41d4-a716-446655440000",
     "name": "smoke-local-snapshot",
     "status": "active",
     "mode": "snapshot",
@@ -45,63 +64,25 @@ List all registered pipelines.
 ]
 ```
 
-### `GET /api/v1/pipelines/:id`
+### `GET /api/v1/pipelines/:pipeline_name`
 
-Get a single pipeline by ID.
+Get the YAML spec for a single pipeline by name.
 
-### `POST /api/v1/pipelines`
-
-Create a new pipeline (without applying a YAML spec). Prefer `/api/v1/specs/apply` for YAML-driven workflows.
-
-**Body:**
-
-```json
-{
-  "name": "my-pipeline",
-  "mode": "snapshot",
-  "schedule": "manual",
-  "spec_json": { ... }
-}
-```
-
-### `DELETE /api/v1/pipelines/:id`
+### `DELETE /api/v1/pipelines/:pipeline_name`
 
 Delete a pipeline and its associated metadata.
 
----
+### `POST /api/v1/pipelines/:pipeline_name/disable`
 
-## Pipeline Runs
+Disable a pipeline. Disabled pipelines will not be triggered by the scheduler.
 
-### `GET /api/v1/pipeline-runs`
+### `POST /api/v1/pipelines/:pipeline_name/enable`
 
-List all pipeline runs across all pipelines.
+Re-enable a previously disabled pipeline.
 
-**Response:**
+### `POST /api/v1/pipelines/:pipeline_name/trigger`
 
-```json
-[
-  {
-    "id": "7b7b7b7b-7b7b-7b7b-7b7b-7b7b7b7b7b7b",
-    "pipeline_id": "550e8400-e29b-41d4-a716-446655440000",
-    "pipeline_name": "smoke-local-snapshot",
-    "status": "completed",
-    "started_at": "2024-01-15T10:05:00Z",
-    "completed_at": "2024-01-15T10:05:42Z"
-  }
-]
-```
-
-### `GET /api/v1/pipeline-runs/:id`
-
-Get a single run by ID.
-
-### `GET /api/v1/pipelines/:id/runs`
-
-List all runs for a specific pipeline.
-
-### `POST /api/v1/pipelines/:id/runs`
-
-Trigger a new run for a pipeline. The run is executed inline (embedded executor).
+Trigger a new run for a pipeline. The run is executed inline (embedded executor, spawned via `tokio::spawn`).
 
 **Body:** Empty or `{}`
 
@@ -114,9 +95,57 @@ Trigger a new run for a pipeline. The run is executed inline (embedded executor)
 }
 ```
 
+### `GET /api/v1/pipelines/:pipeline_name/runs`
+
+List all runs for a specific pipeline.
+
+### `GET /api/v1/pipelines/:pipeline_name/latest-run`
+
+Get the most recent run for a pipeline.
+
+### `GET /api/v1/pipelines/:pipeline_name/run-history`
+
+Get the full run history for a pipeline, ordered by start time.
+
+---
+
+## Pipeline Runs
+
+### `POST /api/v1/pipeline-runs`
+
+Create a new pipeline run record (used internally by the executor to register a run before it starts).
+
+### `POST /api/v1/pipeline-runs/:run_id/status`
+
+Update the status of a pipeline run (e.g., mark as completed or failed).
+
+### `POST /api/v1/pipeline-runs/:run_id/artifacts`
+
+Record a staged artifact (chunk) for a run.
+
+**Body:**
+
+```json
+{
+  "pipeline_name": "smoke-local-snapshot",
+  "stream_name": "public.smoke_users",
+  "sequence": 1,
+  "object_key": "pipelines/smoke-local-snapshot/streams/public.smoke_users/...",
+  "row_count": 1000
+}
+```
+
+### `GET /api/v1/pipeline-runs/:run_id/artifacts`
+
+List all staged artifacts recorded for a run.
+
+### `POST /api/v1/pipeline-runs/:run_id/table-executions`
+
+Upsert a table-level execution record for a run. Tracks per-table status, row counts, and timing.
+
 ### `GET /api/v1/pipeline-runs/:run_id/table-executions`
 
-List all table-level execution records for a run. Each entry tracks the status of one table within the run.
+List all table-level execution records for a run.
 
 **Response:**
 
@@ -147,16 +176,18 @@ Parse, validate, and register a pipeline from a YAML spec string. Creates the pi
 
 ```json
 {
-  "spec": "version: v1alpha1\npipeline:\n  name: my-pipeline\n  ..."
+  "yaml": "version: v1alpha1\npipeline:\n  name: my-pipeline\n  ...",
+  "created_by": "alice"
 }
 ```
+
+The `created_by` field is optional.
 
 **Response (success):**
 
 ```json
 {
-  "pipeline_id": "550e8400-...",
-  "name": "my-pipeline",
+  "pipeline_name": "my-pipeline",
   "created": true
 }
 ```
@@ -169,6 +200,14 @@ Parse, validate, and register a pipeline from a YAML spec string. Creates the pi
   "details": ["pipeline.name is required", "source.kind must be one of: postgres"]
 }
 ```
+
+---
+
+## Examples
+
+### `GET /api/v1/examples/postgres-to-warehouse`
+
+Returns a pre-built example YAML spec for a Postgres-to-warehouse pipeline. Used by the YAML Studio in the web UI to populate a starter template.
 
 ---
 

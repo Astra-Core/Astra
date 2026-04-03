@@ -12,18 +12,18 @@ The minimal example used by the e2e smoke test. Replicates two tables from a loc
 
 ```yaml title="examples/smoke-local-snapshot.astra.yaml"
 version: v1alpha1
-
 pipeline:
   name: smoke-local-snapshot
   mode: snapshot
   schedule: manual
-
 source:
   kind: postgres
-  connection: "localhost:5432/astra"
-  credentials:
-    user: astra
-    password: "env:ASTRA_SMOKE_PG_PASSWORD"
+  connection:
+    host: localhost
+    port: 5432
+    database: astra
+    username: astra
+    passwordRef: env:ASTRA_SMOKE_PG_PASSWORD
   capture:
     tables:
       - public.smoke_users
@@ -31,13 +31,17 @@ source:
     snapshot:
       mode: full
       chunkSize: 1000
-
 destination:
   kind: postgres
-  connection: "localhost:5432/astra"
-  credentials:
-    user: astra
-    password: "env:ASTRA_SMOKE_PG_PASSWORD"
+  connection:
+    host: localhost
+    port: 5432
+    database: astra
+    username: astra
+    passwordRef: env:ASTRA_SMOKE_PG_PASSWORD
+    schema: astra_raw
+    tablePrefix: raw_
+    applicationName: astra-smoke-loader
   staging:
     kind: local
     bucket: astra-smoke-staging
@@ -45,12 +49,14 @@ destination:
   write:
     mode: append
     batchSize: 10000
-
 runtime:
   parallelism:
     tables: 1
   checkpointing:
     intervalSeconds: 30
+  schemaEvolution:
+    additiveChanges: auto-apply
+    breakingChanges: pause
 ```
 
 **Run it:**
@@ -65,39 +71,42 @@ ASTRA_SMOKE_PG_PASSWORD=astra \
 
 ---
 
-## Incremental snapshot (Postgres → Postgres)
+## Full snapshot (Postgres → Postgres, cross-instance)
 
-Uses a cursor field (`updated_at`) so only rows modified since the last run are captured. Ideal for large tables that grow over time.
+Replicates two tables from an application Postgres instance to a separate warehouse instance using local file staging.
 
 ```yaml title="examples/postgres-to-postgres-raw.astra.yaml"
 version: v1alpha1
-
 pipeline:
   name: postgres-raw-local
   mode: snapshot
   schedule: manual
-
 source:
   kind: postgres
-  connection: "localhost:5432/app"
-  credentials:
-    user: app_user
-    password: "env:POSTGRES_PASSWORD"
+  connection:
+    host: localhost
+    port: 5432
+    database: app
+    username: app_user
+    passwordRef: env:POSTGRES_PASSWORD
   capture:
     tables:
       - public.users
       - public.orders
     snapshot:
-      mode: incremental
-      cursorField: updated_at
+      mode: full
       chunkSize: 50000
-
 destination:
   kind: postgres
-  connection: "localhost:5432/warehouse"
-  credentials:
-    user: warehouse_user
-    password: "env:WAREHOUSE_PASSWORD"
+  connection:
+    host: localhost
+    port: 5432
+    database: warehouse
+    username: warehouse_user
+    passwordRef: env:WAREHOUSE_PASSWORD
+    schema: astra_raw
+    tablePrefix: raw_
+    applicationName: astra-loader
   staging:
     kind: local
     bucket: astra-staging
@@ -105,38 +114,40 @@ destination:
   write:
     mode: append
     batchSize: 100000
-
 runtime:
   parallelism:
     tables: 2
   checkpointing:
     intervalSeconds: 30
+  schemaEvolution:
+    additiveChanges: auto-apply
+    breakingChanges: pause
 ```
 
 ---
 
-## Hourly sync to data warehouse (Postgres → Snowflake)
+## Hourly incremental sync to data warehouse (Postgres → Snowflake)
 
-Production-grade pattern: hourly cron, incremental snapshot, S3 staging, and merge write mode for idempotent upserts.
+Production-grade pattern: hourly cron, incremental snapshot using a cursor field, S3 staging, and merge write mode for idempotent upserts.
 
 :::note
-Snowflake destination and merge write mode are parsed and validated but not yet implemented in v0.1. This example shows the target spec shape.
+The Snowflake destination and `merge` write mode are parsed and validated by the spec parser, but are not yet executed in v0.1. This example shows the target spec shape for when these features are implemented.
 :::
 
 ```yaml title="examples/postgres-to-warehouse.astra.yaml"
 version: v1alpha1
-
 pipeline:
   name: postgres-analytics
   mode: snapshot
   schedule: "0 * * * *"    # every hour
-
 source:
   kind: postgres
-  connection: "localhost:5432/app"
-  credentials:
-    user: app_user
-    password: "env:POSTGRES_PASSWORD"
+  connection:
+    host: localhost
+    port: 5432
+    database: app
+    username: app_user
+    passwordRef: env:POSTGRES_PASSWORD
   capture:
     tables:
       - public.users
@@ -145,7 +156,6 @@ source:
       mode: incremental
       cursorField: updated_at
       chunkSize: 50000
-
 destination:
   kind: snowflake
   staging:
@@ -155,12 +165,14 @@ destination:
   write:
     mode: merge
     batchSize: 100000
-
 runtime:
   parallelism:
     tables: 4
   checkpointing:
     intervalSeconds: 30
+  schemaEvolution:
+    additiveChanges: auto-apply
+    breakingChanges: pause
 ```
 
 ---
@@ -172,15 +184,10 @@ Instead of using the CLI, you can register a pipeline through the control plane:
 ```bash
 curl -X POST http://127.0.0.1:8080/api/v1/specs/apply \
   -H "Content-Type: application/json" \
-  -d @apply.json
-```
-
-Where `apply.json` contains:
-
-```json
-{
-  "spec": "<yaml content as a string>"
-}
+  -d '{
+    "yaml": "version: v1alpha1\npipeline:\n  name: my-pipeline\n  ...",
+    "created_by": "alice"
+  }'
 ```
 
 Or use the web UI's **YAML Studio** to paste, validate, and apply specs interactively.

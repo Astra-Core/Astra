@@ -19,19 +19,20 @@ Every staged chunk carries this metadata:
 | `partition` | `String` | Partition identifier (currently `"default"`) |
 | `sequence` | `u64` | Monotonically increasing chunk number within the stream |
 | `row_count` | `u64` | Number of rows in this chunk |
-| `schema_fingerprint` | `String` | Hash of the source schema at capture time |
 | `object_key` | `String` | Full object key for the chunk file |
 
 ## Object key convention
 
 ```
-pipelines/<pipeline>/streams/<stream>/partitions/<partition>/chunks/<sequence>.jsonl.gz
+pipelines/<pipeline>/streams/<stream>/partitions/<partition>/chunks/<sequence:020>.jsonl.gz
 ```
 
-Example:
+The sequence number is zero-padded to 20 digits to ensure lexicographic ordering.
+
+**Example:**
 
 ```
-pipelines/smoke-local-snapshot/streams/public.smoke_users/partitions/default/chunks/00000001.jsonl.gz
+pipelines/smoke-local-snapshot/streams/public.smoke_users/partitions/default/chunks/00000000000000000001.jsonl.gz
 ```
 
 ### Local adapter
@@ -42,7 +43,7 @@ For local staging, the key is prefixed with the local root and bucket:
 $ASTRA_STAGING_LOCAL_ROOT/<bucket>/<key>
 ```
 
-Example:
+**Example:**
 
 ```
 .astra/staging/astra-smoke-staging/pipelines/smoke-local-snapshot/...
@@ -50,7 +51,7 @@ Example:
 
 ### MinIO / S3 adapter
 
-The key is used as-is within the configured S3 bucket. The `ASTRA_S3_ENDPOINT`, `ASTRA_S3_REGION`, `ASTRA_S3_ACCESS_KEY`, and `ASTRA_S3_SECRET_KEY` variables control the connection.
+The key is used as-is within the configured S3 bucket. The `ASTRA_S3_ENDPOINT`, `ASTRA_S3_REGION`, `ASTRA_S3_ACCESS_KEY`, and `ASTRA_S3_SECRET_KEY` variables control the connection. Both MinIO and AWS S3 use the same `MinioStageChunkStore` implementation backed by the `object_store` crate.
 
 ## Chunk format
 
@@ -70,23 +71,34 @@ Each chunk file is a gzip-compressed JSONL file:
 
 ## Checkpoint ledger
 
-The checkpoint ledger tracks which chunks have been captured and (separately) which have been applied to the destination.
+The checkpoint ledger tracks which chunks have been staged so that interrupted runs can resume without re-capturing.
 
 **Ledger file location:**
 
 ```
-$ASTRA_CHECKPOINT_LOCAL_ROOT/<pipeline-name>/<stream-name>.ledger
+$ASTRA_CHECKPOINT_LOCAL_ROOT/<pipeline-name>.snapshot-checkpoints.json
 ```
 
-**Ledger entry format:**
+There is one JSON file per pipeline (not per stream). It contains a `SnapshotCheckpointLedger` with per-table `SnapshotTableCheckpoint` entries tracking the cursor value and list of staged chunks.
+
+**Example entry:**
 
 ```json
 {
-  "object_key": "pipelines/smoke-local-snapshot/streams/public.smoke_users/...",
-  "sequence": 1,
-  "row_count": 1000,
-  "cursor_value": "2024-01-15T10:05:42Z",
-  "staged_at": "2024-01-15T10:05:43Z"
+  "pipeline_name": "smoke-local-snapshot",
+  "tables": {
+    "public.smoke_users": {
+      "cursor_value": null,
+      "staged_chunks": [
+        {
+          "object_key": "pipelines/smoke-local-snapshot/streams/public.smoke_users/...",
+          "sequence": 1,
+          "row_count": 1000
+        }
+      ],
+      "complete": true
+    }
+  }
 }
 ```
 
@@ -96,19 +108,23 @@ The Postgres destination records applied chunks in `astra_raw._applied_chunks`:
 
 ```sql
 CREATE TABLE astra_raw._applied_chunks (
-    object_key   TEXT PRIMARY KEY,
-    applied_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+    pipeline_name  TEXT        NOT NULL,
+    stream_name    TEXT        NOT NULL,
+    sequence       BIGINT      NOT NULL,
+    row_count      BIGINT,
+    loaded_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (pipeline_name, stream_name, sequence)
 );
 ```
 
-This makes the load phase idempotent: re-running `execute-local-snapshot` skips already-applied chunks.
+Each chunk load uses `INSERT ... ON CONFLICT DO NOTHING` on this table within a transaction, making the load phase idempotent: re-running `execute-local-snapshot` or `load-local-staging-to-postgres` skips already-applied chunks.
 
 ## Backend implementations
 
-| Backend | Kind value | Implementation crate |
+| Backend | Kind value | Implementation |
 |---|---|---|
-| Local filesystem | `local` | `crates/astra-runtime` |
-| MinIO | `minio` | `crates/astra-runtime` |
-| AWS S3 | `s3` | `crates/astra-runtime` |
+| Local filesystem | `local` | `LocalStageChunkStore` in `crates/astra-runtime` |
+| MinIO | `minio` | `MinioStageChunkStore` in `crates/astra-runtime` |
+| AWS S3 | `s3` | `MinioStageChunkStore` in `crates/astra-runtime` (same impl, custom endpoint) |
 
-All three implement the same `StagingBackend` trait. The pipeline spec's `destination.staging.kind` selects which implementation is used at runtime.
+All three implement the `StageChunkStore` async trait. The pipeline spec's `destination.staging.kind` selects which implementation is used at runtime.
