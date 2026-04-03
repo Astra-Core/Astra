@@ -15,6 +15,7 @@ cargo test --workspace         # test all crates
 cargo test -p <crate>          # test a single crate
 cargo test <test_name>         # run a specific test by name
 cargo clippy --workspace       # lint
+cargo fmt --all                # format — always run before committing
 ```
 
 ### Control plane
