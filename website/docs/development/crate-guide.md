@@ -24,13 +24,13 @@ The main server binary. Responsibilities:
 Key types:
 - `PipelineService` — orchestrates create/read/update for pipelines and runs
 - `PostgresPipelineRepository` / `InMemoryPipelineRepository`
-- API handlers in `src/api/`
+- API handlers in `src/http/`
 
 ### `apps/cli`
 
 The `astra` CLI binary. Built with [Clap](https://docs.rs/clap).
 
-Commands: `validate`, `discover-source`, `snapshot-to-local-staging`, `execute-local-snapshot`, `run-pipeline`, `apply-spec`.
+Commands: `validate`, `apply`, `discover-source`, `snapshot-to-local-staging`, `snapshot-to-minio-staging`, `load-local-staging-to-postgres`, `execute-local-snapshot`.
 
 ### `apps/web`
 
@@ -49,9 +49,9 @@ Stub for a future distributed worker that executes pipeline runs on behalf of th
 YAML spec parsing and validation for the `v1alpha1` pipeline spec.
 
 Key types:
-- `PipelineSpec` — top-level spec struct (derives `serde::Deserialize`)
-- `SourceConfig`, `DestinationConfig`, `RuntimeConfig`
-- `validate(spec: &PipelineSpec) -> Result<(), Vec<ValidationError>>`
+- `AstraSpec` — top-level spec struct (derives `serde::Deserialize`)
+- `Source`, `Destination`, `Runtime`, `Capture`, `Pipeline`
+- `validate(spec: &AstraSpec) -> Result<(), Vec<String>>` — returns a list of validation error messages
 
 Depended on by: `apps/control-plane`, `apps/cli`
 
@@ -59,7 +59,7 @@ Depended on by: `apps/control-plane`, `apps/cli`
 
 Shared enums and domain types used across the workspace:
 
-- `PipelineStatus` — `Active`, `Paused`, `Error`
+- `PipelineStatus` — `Draft`, `Active`, `Disabled`, `Paused`, `Failed`, `Archived`
 - `RunStatus` — `Started`, `Completed`, `Failed`
 - `JobKind` — `Snapshot`, `Incremental`, `Cdc`
 - `RunPhase` — `Capture`, `Load`, `Done`
@@ -71,25 +71,31 @@ Depended on by: all crates that deal with pipeline state.
 Staging backends and checkpoint logic. The core durability layer.
 
 Key types:
-- `StagingBackend` trait — `write_chunk`, `read_chunk`, `list_chunks`
-- `LocalStagingBackend` — writes to the local filesystem
-- `MinioStagingBackend` / `S3StagingBackend` — writes to object storage
-- `CheckpointLedger` — reads/writes checkpoint state
-- `StageChunk` — chunk metadata struct
+- `StageChunkStore` async trait — `ensure_ready`, `write_chunk`, `read_chunk`
+- `LocalStageChunkStore` — writes to the local filesystem; also exposes `list_chunks_for_pipeline()`
+- `MinioStageChunkStore` — writes to MinIO or S3-compatible storage via the `object_store` crate
+- `SnapshotCheckpointLedger` / `LocalCheckpointStore` — reads/writes per-pipeline checkpoint state as JSON
+- `StageChunk` — chunk metadata struct (pipeline, stream, partition, sequence, row_count, object_key)
+
+Staging object keys follow this convention:
+
+```
+pipelines/<pipeline_name>/streams/<stream_name>/partitions/<partition_key>/chunks/<sequence:020>.jsonl.gz
+```
 
 ### `crates/astra-connectors`
 
 Source and destination connector implementations.
 
 Key types:
-- `PostgresSourceConnector` — `discover()`, `snapshot()`, `snapshot_incremental()`
-- `PostgresDestinationConnector` — `load_chunks()`
+- `PostgresSource` — `from_spec()`, `discover()`, `snapshot_to_jsonl_gzip()`
+- `PostgresDestinationLoader` — `from_spec()`, `load_local_stage_chunks()`
 
-The Postgres destination creates and populates `astra_raw.<table>` tables.
+The Postgres source uses `to_jsonb()` for row serialization and system catalog queries for PK discovery. The Postgres destination creates and populates `astra_raw.<table>` tables with per-chunk idempotency tracking via `_applied_chunks`.
 
 ### `crates/astra-cdc`
 
-CDC orchestration. Currently a stub that returns an explicit "not implemented" error when triggered.
+CDC orchestration. Currently a stub — defines `CdcPhase`, `PostgresConfig`, `CdcConfig`, and `StreamProgress` types, but `status()` returns `"cdc skeleton defined"`. Returns an explicit "not implemented" error when triggered via the CLI.
 
 Planned: Postgres logical replication via `pgoutput`, WAL position tracking, initial backfill + tail mode.
 
@@ -99,15 +105,11 @@ Core domain value objects shared across the workspace. Small types that don't be
 
 ### `crates/astra-api`
 
-HTTP API client types for the control-plane API. Used by the CLI commands that talk to the control plane (`run-pipeline`, `apply-spec`).
+HTTP API client types for the control-plane API. Used by CLI commands that communicate with the control plane.
 
 ### `crates/astra-secrets`
 
-Credential management abstraction. Currently supports `env:<VAR>` secret references. Vault and file-based secrets are planned.
-
-Key types:
-- `SecretResolver` trait
-- `EnvSecretResolver` — resolves `env:VAR` to environment variable values
+Credential management abstraction. Currently a stub — `status()` returns a string. The `env:` prefix for `passwordRef` is resolved directly in `crates/astra-connectors` without going through this crate. Vault and file-based secrets are planned.
 
 ### `crates/astra-observability`
 

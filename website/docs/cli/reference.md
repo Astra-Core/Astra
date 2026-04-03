@@ -30,10 +30,26 @@ cargo run -p astra -- validate <spec-file>
 
 ```bash
 cargo run -p astra -- validate examples/smoke-local-snapshot.astra.yaml
-# Pipeline spec is valid.
+# valid Astra spec: smoke-local-snapshot  mode=snapshot  source=postgres  dest=postgres  tables=["public.smoke_users","public.smoke_orders"]
 ```
 
 Exits with code 0 on success, non-zero on validation errors. All validation errors are printed to stderr.
+
+---
+
+### `apply`
+
+Validate a pipeline spec and print the normalized representation. Intended to send the spec to the control-plane API — full API submission is not yet wired up in v0.1.
+
+```bash
+cargo run -p astra -- apply <spec-file>
+```
+
+**Example:**
+
+```bash
+cargo run -p astra -- apply my-pipeline.astra.yaml
+```
 
 ---
 
@@ -58,10 +74,10 @@ Output includes table names, column names, data types, nullability, and primary 
 
 ### `snapshot-to-local-staging`
 
-Run the capture phase: paginate through source tables and write compressed JSONL.gz chunks to the configured staging location.
+Run the capture phase: paginate through source tables and write compressed JSONL.gz chunks to a local directory.
 
 ```bash
-cargo run -p astra -- snapshot-to-local-staging <spec-file> [--no-resume]
+cargo run -p astra -- snapshot-to-local-staging <spec-file> [options]
 ```
 
 **Options:**
@@ -69,12 +85,17 @@ cargo run -p astra -- snapshot-to-local-staging <spec-file> [--no-resume]
 | Flag | Description |
 |---|---|
 | `--no-resume` | Ignore existing checkpoints and restart from scratch. |
+| `--max-rows-per-table <N>` | Stop after capturing N rows per table (useful for testing). |
+| `--staging-root <PATH>` | Override the local staging root directory. |
+| `--checkpoint-root <PATH>` | Override the checkpoint ledger root directory. |
+| `--chunk-size <N>` | Override the chunk size from the spec. |
+| `--control-plane-url <URL>` | Control plane URL for recording run metadata. |
 
 **Example:**
 
 ```bash
-POSTGRES_PASSWORD=secret \
-  cargo run -p astra -- snapshot-to-local-staging my-pipeline.astra.yaml
+ASTRA_SMOKE_PG_PASSWORD=astra \
+  cargo run -p astra -- snapshot-to-local-staging examples/smoke-local-snapshot.astra.yaml
 ```
 
 **What it does:**
@@ -84,78 +105,108 @@ POSTGRES_PASSWORD=secret \
 3. Paginates each table in `chunkSize` batches
 4. Serializes each batch as JSONL (one JSON object per row)
 5. Compresses each batch with gzip
-6. Writes chunks to the staging location (local or MinIO)
+6. Writes chunks to the local staging location
 7. Records each staged chunk in the checkpoint ledger
 
 The checkpoint ledger lives at `.astra/checkpoints/<pipeline-name>/` by default. If a run is interrupted and restarted, already-staged chunks are skipped.
 
 ---
 
-### `execute-local-snapshot`
+### `snapshot-to-minio-staging`
 
-Run the load phase: read staged chunks and bulk-load them into the destination.
+Run the capture phase and write compressed JSONL.gz chunks to a MinIO (or S3-compatible) bucket.
 
 ```bash
-cargo run -p astra -- execute-local-snapshot <spec-file>
+cargo run -p astra -- snapshot-to-minio-staging <spec-file> [options]
 ```
+
+**Options:**
+
+| Flag | Description |
+|---|---|
+| `--max-rows-per-table <N>` | Stop after capturing N rows per table. |
+| `--endpoint <URL>` | MinIO/S3 endpoint URL (e.g. `http://localhost:9000`). |
+| `--region <REGION>` | S3 region (default: `us-east-1`). |
+| `--access-key <KEY>` | S3 access key. |
+| `--secret-key <KEY>` | S3 secret key. |
 
 **Example:**
 
 ```bash
-POSTGRES_PASSWORD=secret \
-  cargo run -p astra -- execute-local-snapshot my-pipeline.astra.yaml
+ASTRA_SMOKE_PG_PASSWORD=astra \
+  cargo run -p astra -- snapshot-to-minio-staging examples/smoke-local-snapshot.astra.yaml \
+    --endpoint http://localhost:9000 \
+    --access-key astra \
+    --secret-key astrastorage
+```
+
+---
+
+### `load-local-staging-to-postgres`
+
+Run the load phase: read staged JSONL.gz chunks from local storage and bulk-load them into the destination Postgres database.
+
+```bash
+cargo run -p astra -- load-local-staging-to-postgres <spec-file> [options]
+```
+
+**Options:**
+
+| Flag | Description |
+|---|---|
+| `--staging-root <PATH>` | Override the local staging root directory. |
+| `--control-plane-url <URL>` | Control plane URL for recording run metadata. |
+
+**Example:**
+
+```bash
+ASTRA_SMOKE_PG_PASSWORD=astra \
+  cargo run -p astra -- load-local-staging-to-postgres examples/smoke-local-snapshot.astra.yaml
+```
+
+---
+
+### `execute-local-snapshot`
+
+Run the full snapshot pipeline end-to-end: capture to local staging, then load to destination. Equivalent to running `snapshot-to-local-staging` followed by `load-local-staging-to-postgres`.
+
+```bash
+cargo run -p astra -- execute-local-snapshot <spec-file> [options]
+```
+
+**Options:**
+
+| Flag | Description |
+|---|---|
+| `--no-resume` | Ignore existing checkpoints and restart from scratch. |
+| `--max-rows-per-table <N>` | Stop after capturing N rows per table. |
+| `--staging-root <PATH>` | Override the local staging root directory. |
+| `--checkpoint-root <PATH>` | Override the checkpoint ledger root directory. |
+| `--chunk-size <N>` | Override the chunk size from the spec. |
+| `--control-plane-url <URL>` | Control plane URL for recording run metadata. |
+
+**Example:**
+
+```bash
+ASTRA_SMOKE_PG_PASSWORD=astra \
+  cargo run -p astra -- execute-local-snapshot examples/smoke-local-snapshot.astra.yaml
 ```
 
 **What it does:**
 
-1. Reads the checkpoint ledger to find all staged chunks
-2. Decompresses each chunk
-3. Parses JSONL rows
-4. Bulk-inserts into `astra_raw.<table>` in the destination Postgres database
+1. Reads the checkpoint ledger to find already-staged chunks (skips them unless `--no-resume`)
+2. Paginates the source database and stages chunks to local storage
+3. Decompresses each staged chunk
+4. Parses JSONL rows
+5. Bulk-inserts into `astra_raw.<table>` in the destination Postgres database
 
 The destination tables are created automatically if they don't exist. Each row in `astra_raw` has:
 
 | Column | Type | Description |
 |---|---|---|
-| `_object_key` | `TEXT` | Source staging object key |
 | `_sequence` | `BIGINT` | Chunk sequence number |
-| `_row_number` | `BIGINT` | Row position within the chunk |
 | `_loaded_at` | `TIMESTAMPTZ` | Timestamp when the row was loaded |
 | `_data` | `JSONB` | The full source row as a JSON object |
-
----
-
-### `run-pipeline`
-
-Trigger a pipeline run via the control-plane API (requires a running control plane).
-
-```bash
-cargo run -p astra -- run-pipeline <pipeline-name>
-```
-
-**Example:**
-
-```bash
-cargo run -p astra -- run-pipeline smoke-local-snapshot
-```
-
----
-
-### `apply-spec`
-
-Register or update a pipeline spec via the control-plane API.
-
-```bash
-cargo run -p astra -- apply-spec <spec-file>
-```
-
-**Example:**
-
-```bash
-cargo run -p astra -- apply-spec my-pipeline.astra.yaml
-```
-
-Equivalent to `POST /api/v1/specs/apply`. The control plane must be running and reachable at `ASTRA_CONTROL_PLANE_ADDR` (default `127.0.0.1:8080`).
 
 ---
 
@@ -165,8 +216,7 @@ The CLI reads these variables at runtime:
 
 | Variable | Used by | Description |
 |---|---|---|
-| `env:<VAR>` | YAML spec | Any variable referenced via `env:` in a spec |
-| `ASTRA_CONTROL_PLANE_ADDR` | `run-pipeline`, `apply-spec` | Address of the control plane (default `127.0.0.1:8080`) |
+| `env:<VAR>` | YAML spec | Any variable referenced via `env:` in a spec's `passwordRef` field |
 | `ASTRA_STAGING_LOCAL_ROOT` | staging | Root directory for local staging |
 | `ASTRA_CHECKPOINT_LOCAL_ROOT` | checkpointing | Root directory for checkpoint ledgers |
 | `ASTRA_S3_ENDPOINT` | MinIO/S3 staging | S3 endpoint URL |

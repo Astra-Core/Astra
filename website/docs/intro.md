@@ -30,14 +30,14 @@ Pipelines are defined in YAML (`v1alpha1` spec) and executed via the CLI or the 
 
 ## What's in v0.1
 
-**Working**: YAML validation, Postgres schema discovery, full and incremental snapshot, local/MinIO staging (JSONL.gz), Postgres raw destination loader, resumable checkpoint ledger, 6 CLI commands, control-plane REST API (10 endpoints), React web UI.
+**Working**: YAML validation, Postgres schema discovery, full and incremental snapshot, local/MinIO/S3 staging (JSONL.gz), Postgres raw destination loader, resumable checkpoint ledger, 7 CLI commands, control-plane REST API (17+ endpoints), React web UI with pipeline dashboard, run history, and YAML Studio.
 
-**Not yet implemented**: CDC execution (stub), Python connector runtime, Snowflake/BigQuery destinations, merge/upsert write mode, schema evolution enforcement, distributed workers, observability.
+**Not yet implemented**: CDC execution (stub), Python connector runtime, Snowflake/BigQuery destinations, merge/upsert/replace write modes, schema evolution enforcement, distributed workers, observability.
 
 ## Quick navigation
 
 - [Quickstart →](./getting-started/quickstart.md) — up and running in 15 minutes
 - [YAML Spec →](./yaml-spec/overview.md) — full pipeline spec reference
-- [CLI Reference →](./cli/reference.md) — all six commands documented
+- [CLI Reference →](./cli/reference.md) — all seven commands documented
 - [API Reference →](./control-plane/api.md) — REST API for the control plane
 - [Architecture →](./architecture/overview.md) — design decisions and data flow

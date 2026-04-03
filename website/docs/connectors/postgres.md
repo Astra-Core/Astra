@@ -12,18 +12,20 @@ The Postgres connector is Astra's first and most complete connector. It supports
 
 ### Connection
 
-Specify the Postgres source in your pipeline YAML:
+Specify the Postgres source in your pipeline YAML using the flat-map connection format:
 
 ```yaml
 source:
   kind: postgres
-  connection: "localhost:5432/mydb"
-  credentials:
-    user: myuser
-    password: "env:POSTGRES_PASSWORD"
+  connection:
+    host: localhost
+    port: 5432
+    database: mydb
+    username: myuser
+    passwordRef: "env:POSTGRES_PASSWORD"
 ```
 
-The connection string format is `host:port/database`. IPv6 addresses and Unix sockets are not yet supported.
+All fields are required. `passwordRef` accepts a plain string (dev only) or `env:VAR_NAME` to read from an environment variable.
 
 ### Schema discovery
 
@@ -31,7 +33,7 @@ The connection string format is `host:port/database`. IPv6 addresses and Unix so
 cargo run -p astra -- discover-source my-pipeline.astra.yaml
 ```
 
-The connector issues `SELECT column_name, data_type, is_nullable FROM information_schema.columns` queries to enumerate tables and their schemas. Primary keys are discovered via `information_schema.table_constraints`.
+The connector queries `information_schema.columns` to enumerate tables and their schemas. Primary keys are discovered via the Postgres system catalog (`pg_index`, `pg_class`, and `pg_attribute`), which is more reliable than `information_schema.table_constraints` for inherited tables and expression indexes.
 
 ### Snapshot modes
 
@@ -46,7 +48,7 @@ capture:
     chunkSize: 50000
 ```
 
-The connector uses `SELECT * FROM <table> ORDER BY <primary_key> LIMIT <chunkSize> OFFSET <n>` pagination. Each chunk is committed to staging before advancing to the next.
+The connector paginates using `SELECT to_jsonb(snapshot_row) AS record FROM (...) LIMIT <chunkSize> OFFSET <n>`. Each chunk is committed to staging before advancing to the next.
 
 #### Incremental snapshot
 
@@ -68,7 +70,7 @@ Incremental mode misses hard-deletes. Use CDC mode (not yet implemented) for ful
 
 ### Supported data types
 
-The Postgres connector maps source types to JSON as follows:
+The Postgres connector serializes rows using `to_jsonb()`, which maps source types to JSON as follows:
 
 | Postgres type | JSON representation |
 |---|---|
@@ -86,17 +88,23 @@ The Postgres connector maps source types to JSON as follows:
 
 ## Destination: Postgres (raw loader)
 
-The Postgres destination loads staged chunks into a `astra_raw` schema. This is an append-only raw layer — no deduplication or merge is performed in v0.1.
+The Postgres destination loads staged chunks into an `astra_raw` schema. This is an append-only raw layer — no deduplication or merge is performed in v0.1.
 
 ### Configuration
 
 ```yaml
 destination:
   kind: postgres
-  connection: "localhost:5432/warehouse"
-  credentials:
-    user: warehouse_user
-    password: "env:WAREHOUSE_PASSWORD"
+  connection:
+    host: localhost
+    port: 5432
+    database: warehouse
+    username: warehouse_user
+    passwordRef: "env:WAREHOUSE_PASSWORD"
+    schema: astra_raw          # optional, defaults to astra_raw
+    tablePrefix: raw_          # optional, defaults to raw_
+    applicationName: astra-loader  # optional
+    sslMode: prefer            # optional
   staging:
     kind: local
     bucket: astra-staging
@@ -108,35 +116,36 @@ destination:
 
 ### Raw table schema
 
-For each source table `<schema>.<table>`, Astra creates `astra_raw.raw_<schema>_<table>`:
+For each source table `<schema>.<table>`, Astra creates `<destination_schema>.<tablePrefix><schema>_<table>`. With defaults this becomes `astra_raw.raw_public_users`:
 
 ```sql
 CREATE TABLE astra_raw.raw_public_users (
-    _object_key   TEXT          NOT NULL,
     _sequence     BIGINT        NOT NULL,
-    _row_number   BIGINT        NOT NULL,
     _loaded_at    TIMESTAMPTZ   NOT NULL DEFAULT now(),
     _data         JSONB         NOT NULL
 );
 ```
 
-- `_object_key` — the staging object key for the source chunk
 - `_sequence` — chunk sequence number (monotonically increasing within a run)
-- `_row_number` — row position within the chunk
+- `_loaded_at` — timestamp when the row was loaded
 - `_data` — the full source row as a JSON object
 
 ### Applied chunks tracking
 
-To prevent double-loading, the destination tracks which chunks have been applied:
+To prevent double-loading, the destination tracks which chunks have been applied in `astra_raw._applied_chunks`:
 
 ```sql
 CREATE TABLE astra_raw._applied_chunks (
-    object_key   TEXT PRIMARY KEY,
-    applied_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+    pipeline_name  TEXT        NOT NULL,
+    stream_name    TEXT        NOT NULL,
+    sequence       BIGINT      NOT NULL,
+    row_count      BIGINT,
+    loaded_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (pipeline_name, stream_name, sequence)
 );
 ```
 
-Re-running `execute-local-snapshot` skips already-applied chunks.
+Each chunk load is wrapped in a transaction with `INSERT INTO _applied_chunks ... ON CONFLICT DO NOTHING`. Re-running `execute-local-snapshot` (or `load-local-staging-to-postgres`) skips already-applied chunks, making the load phase idempotent.
 
 ### CDC (planned)
 
