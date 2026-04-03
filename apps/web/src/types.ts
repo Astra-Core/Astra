@@ -69,6 +69,14 @@ export type TableExecutionState = {
 
 export type WizardStep = 1 | 2 | 3 | 4;
 
+export type SnapshotMode = 'full' | 'incremental' | 'none';
+
+export type WizardSnapshot = {
+  mode: SnapshotMode;
+  cursorField: string;
+  chunkSize: string;
+};
+
 export type WizardSource = {
   host: string;
   port: string;
@@ -89,6 +97,7 @@ export type WizardDestination = {
 export type WizardState = {
   step: WizardStep;
   pipelineName: string;
+  snapshot: WizardSnapshot;
   source: WizardSource;
   destination: WizardDestination;
   applyStatus: string;
