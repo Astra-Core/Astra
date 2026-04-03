@@ -625,6 +625,17 @@ fn snapshot_execution_options(
     max_rows_per_table: Option<u64>,
     chunk_size: Option<u64>,
 ) -> SnapshotExecutionOptions {
+    let is_incremental = spec
+        .source
+        .capture
+        .snapshot
+        .as_ref()
+        .map(|s| s.mode == astra_yaml::SnapshotMode::Incremental)
+        .unwrap_or(false);
+
+    // In incremental mode every table runs on every invocation — the cursor
+    // filters which rows are actually fetched. In full mode completed tables
+    // are skipped (resume-within-a-single-run behaviour).
     let tables = spec
         .source
         .capture
@@ -633,24 +644,21 @@ fn snapshot_execution_options(
         .map(|table| table.trim().to_string())
         .filter(|table| !table.is_empty())
         .filter(|table| {
-            !ledger
-                .tables
-                .get(table)
-                .map(|checkpoint| checkpoint.completed)
-                .unwrap_or(false)
+            is_incremental
+                || !ledger
+                    .tables
+                    .get(table)
+                    .map(|checkpoint| checkpoint.completed)
+                    .unwrap_or(false)
         })
         .collect();
 
+    // Always carry the sequence counter forward so object keys never collide
+    // across runs.
     let start_sequence_by_table = ledger
         .tables
         .iter()
-        .filter_map(|(table, checkpoint)| {
-            if checkpoint.completed {
-                None
-            } else {
-                Some((table.clone(), checkpoint.next_sequence))
-            }
-        })
+        .map(|(table, checkpoint)| (table.clone(), checkpoint.next_sequence))
         .collect();
 
     let cursor_field = spec
@@ -846,6 +854,46 @@ mod tests {
         AstraSpec::from_file(path.to_str().expect("utf-8 path")).expect("sample spec loads")
     }
 
+    fn full_mode_spec() -> AstraSpec {
+        AstraSpec::parse_yaml(
+            r#"
+version: v1alpha1
+pipeline:
+  name: postgres-full
+  mode: snapshot
+  schedule: manual
+source:
+  kind: postgres
+  connection:
+    host: localhost
+    port: 5432
+    database: app
+    username: app_user
+  capture:
+    tables:
+      - public.users
+      - public.orders
+    snapshot:
+      mode: full
+      chunkSize: 25
+destination:
+  kind: postgres
+  connection:
+    host: localhost
+    port: 5432
+    database: warehouse
+    username: warehouse_user
+  staging:
+    kind: local
+    bucket: astra-staging
+  write:
+    mode: append
+runtime: {}
+"#,
+        )
+        .expect("full mode spec parses")
+    }
+
     #[test]
     fn rejects_cdc_for_snapshot_commands() {
         let spec = AstraSpec::parse_yaml(
@@ -890,8 +938,9 @@ runtime: {}
     }
 
     #[test]
-    fn snapshot_execution_options_skip_completed_tables() {
-        let spec = sample_spec();
+    fn snapshot_execution_options_skip_completed_tables_in_full_mode() {
+        // Use a full-mode spec — completed tables should be skipped (resume behaviour).
+        let spec = full_mode_spec();
         let mut ledger = SnapshotCheckpointLedger {
             pipeline_name: spec.pipeline.name.clone(),
             updated_at_unix_ms: 0,
@@ -900,7 +949,7 @@ runtime: {}
         ledger.tables.insert(
             "public.users".to_string(),
             astra_runtime::SnapshotTableCheckpoint {
-                next_sequence: 0,
+                next_sequence: 1,
                 rows_staged: 10,
                 last_chunk_key: Some("users/0".to_string()),
                 completed: true,
@@ -922,14 +971,59 @@ runtime: {}
 
         let options = snapshot_execution_options(&spec, &ledger, Some(100), Some(25));
 
+        // users is completed → skipped; orders is incomplete → included.
         assert_eq!(options.tables, vec!["public.orders".to_string()]);
+        // Sequences are carried forward for all tables to prevent object key collisions.
         assert_eq!(
             options.start_sequence_by_table.get("public.orders"),
             Some(&3)
         );
-        assert!(!options.start_sequence_by_table.contains_key("public.users"));
+        assert_eq!(
+            options.start_sequence_by_table.get("public.users"),
+            Some(&1)
+        );
         assert_eq!(options.max_rows_per_table, Some(100));
         assert_eq!(options.chunk_size, Some(25));
+    }
+
+    #[test]
+    fn snapshot_execution_options_reruns_completed_tables_in_incremental_mode() {
+        // In incremental mode completed tables must run again (cursor filters the delta).
+        let spec = sample_spec(); // incremental mode
+        let mut ledger = SnapshotCheckpointLedger {
+            pipeline_name: spec.pipeline.name.clone(),
+            updated_at_unix_ms: 0,
+            tables: BTreeMap::new(),
+        };
+        ledger.tables.insert(
+            "public.users".to_string(),
+            astra_runtime::SnapshotTableCheckpoint {
+                next_sequence: 1,
+                rows_staged: 10,
+                last_chunk_key: Some("users/0".to_string()),
+                completed: true,
+                updated_at_unix_ms: 1,
+                last_cursor_value: Some(serde_json::json!("2024-01-01T00:00:00Z")),
+            },
+        );
+
+        let options = snapshot_execution_options(&spec, &ledger, None, None);
+
+        // users is completed but incremental — must still be included.
+        assert!(
+            options.tables.contains(&"public.users".to_string()),
+            "completed table should still run in incremental mode"
+        );
+        // Sequence must continue from ledger to avoid object key collision.
+        assert_eq!(
+            options.start_sequence_by_table.get("public.users"),
+            Some(&1)
+        );
+        // Cursor value must be loaded so the WHERE clause is applied.
+        assert_eq!(
+            options.last_cursor_by_table.get("public.users"),
+            Some(&serde_json::json!("2024-01-01T00:00:00Z"))
+        );
     }
 
     #[test]
@@ -952,8 +1046,8 @@ runtime: {}
     }
 
     #[test]
-    fn no_tables_remaining_when_everything_is_complete() {
-        let spec = sample_spec();
+    fn no_tables_remaining_when_everything_is_complete_in_full_mode() {
+        let spec = full_mode_spec();
         let mut ledger = SnapshotCheckpointLedger {
             pipeline_name: spec.pipeline.name.clone(),
             updated_at_unix_ms: 0,

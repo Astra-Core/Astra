@@ -54,9 +54,14 @@ async fn run_pipeline(
         anyhow::bail!("embedded executor currently supports destination.kind=postgres only");
     }
 
-    // Ephemeral staging area, unique per run — cleaned up on completion
+    // Ephemeral staging area, unique per run — cleaned up on completion.
     let staging_root = std::env::temp_dir().join(format!("astra/{}", run_id));
-    let checkpoint_root = staging_root.join("checkpoints");
+
+    // Persistent checkpoint store, keyed by pipeline name, survives across runs.
+    // Holds cursor watermarks and sequence counters needed for incremental mode.
+    let checkpoint_root = std::env::var_os("ASTRA_CHECKPOINT_LOCAL_ROOT")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from(".astra/checkpoints"));
 
     let staging_config = StagingConfig {
         kind: StagingKind::Local,
@@ -71,6 +76,7 @@ async fn run_pipeline(
 
     let checkpoint_store = LocalCheckpointStore::new(checkpoint_root);
     checkpoint_store.ensure_ready()?;
+    let existing_ledger = checkpoint_store.load(&spec.pipeline.name)?;
 
     // ── Phase 1: Snapshot ────────────────────────────────────────────────────
 
@@ -92,21 +98,58 @@ async fn run_pipeline(
         .as_ref()
         .and_then(|s| s.cursor_field.clone())
         .filter(|s| !s.trim().is_empty());
+    let is_incremental = cursor_field.is_some();
+
+    // In incremental mode every table runs on every run (cursor filters new rows).
+    // In full mode completed tables are skipped (resume-within-a-run behaviour).
+    let tables = spec
+        .source
+        .capture
+        .tables
+        .iter()
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty())
+        .filter(|t| {
+            is_incremental
+                || !existing_ledger
+                    .tables
+                    .get(t)
+                    .map(|cp| cp.completed)
+                    .unwrap_or(false)
+        })
+        .collect();
+
+    // Always carry forward the sequence counter so object keys never collide
+    // with a prior run.
+    let start_sequence_by_table = existing_ledger
+        .tables
+        .iter()
+        .map(|(t, cp)| (t.clone(), cp.next_sequence))
+        .collect();
+
+    let last_cursor_by_table = if is_incremental {
+        existing_ledger
+            .tables
+            .iter()
+            .filter_map(|(t, cp)| cp.last_cursor_value.clone().map(|v| (t.clone(), v)))
+            .collect()
+    } else {
+        BTreeMap::new()
+    };
+
     let snapshot = source
         .snapshot_to_jsonl_gzip(SnapshotExecutionOptions {
-            tables: spec
+            tables,
+            max_rows_per_table: None,
+            chunk_size: spec
                 .source
                 .capture
-                .tables
-                .iter()
-                .map(|t| t.trim().to_string())
-                .filter(|t| !t.is_empty())
-                .collect(),
-            max_rows_per_table: None,
-            chunk_size: None,
-            start_sequence_by_table: BTreeMap::new(),
+                .snapshot
+                .as_ref()
+                .and_then(|s| s.chunk_size),
+            start_sequence_by_table,
             cursor_field,
-            last_cursor_by_table: BTreeMap::new(),
+            last_cursor_by_table,
         })
         .await?;
 
