@@ -85,6 +85,13 @@ async fn run_pipeline(
         .await?;
 
     let source = PostgresSource::from_spec(&spec)?;
+    let cursor_field = spec
+        .source
+        .capture
+        .snapshot
+        .as_ref()
+        .and_then(|s| s.cursor_field.clone())
+        .filter(|s| !s.trim().is_empty());
     let snapshot = source
         .snapshot_to_jsonl_gzip(SnapshotExecutionOptions {
             tables: spec
@@ -98,6 +105,8 @@ async fn run_pipeline(
             max_rows_per_table: None,
             chunk_size: None,
             start_sequence_by_table: BTreeMap::new(),
+            cursor_field,
+            last_cursor_by_table: BTreeMap::new(),
         })
         .await?;
 
@@ -118,6 +127,7 @@ async fn run_pipeline(
             table.sequence,
             chunk.row_count,
             &chunk.object_key,
+            None,
         )?;
 
         service
@@ -156,6 +166,13 @@ async fn run_pipeline(
     }
 
     for progress in snapshot.table_progress {
+        if let Some(cursor_value) = progress.max_cursor_value.clone() {
+            checkpoint_store.update_cursor_value(
+                &spec.pipeline.name,
+                &progress.table,
+                cursor_value,
+            )?;
+        }
         if progress.finished {
             checkpoint_store.mark_table_complete(&spec.pipeline.name, &progress.table)?;
         }

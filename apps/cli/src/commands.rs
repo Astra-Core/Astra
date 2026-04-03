@@ -202,6 +202,7 @@ pub async fn snapshot_to_local_staging(
             table.sequence,
             chunk.row_count,
             &chunk.object_key,
+            None, // cursor value persisted after all chunks via table_progress
         )?;
 
         let resolved = store.resolve_path(&chunk.object_key);
@@ -253,6 +254,13 @@ pub async fn snapshot_to_local_staging(
 
     println!("table progress:");
     for progress in snapshot.table_progress {
+        if let Some(cursor_value) = progress.max_cursor_value.clone() {
+            checkpoint_store.update_cursor_value(
+                &spec.pipeline.name,
+                &progress.table,
+                cursor_value,
+            )?;
+        }
         if progress.finished {
             checkpoint_store.mark_table_complete(&spec.pipeline.name, &progress.table)?;
         }
@@ -348,6 +356,8 @@ pub async fn snapshot_to_minio_staging(
             max_rows_per_table,
             chunk_size: None,
             start_sequence_by_table: BTreeMap::new(),
+            cursor_field: None,
+            last_cursor_by_table: BTreeMap::new(),
         })
         .await?;
 
@@ -643,11 +653,36 @@ fn snapshot_execution_options(
         })
         .collect();
 
+    let cursor_field = spec
+        .source
+        .capture
+        .snapshot
+        .as_ref()
+        .and_then(|s| s.cursor_field.clone())
+        .filter(|s| !s.trim().is_empty());
+
+    let last_cursor_by_table = if cursor_field.is_some() {
+        ledger
+            .tables
+            .iter()
+            .filter_map(|(table, checkpoint)| {
+                checkpoint
+                    .last_cursor_value
+                    .clone()
+                    .map(|v| (table.clone(), v))
+            })
+            .collect()
+    } else {
+        BTreeMap::new()
+    };
+
     SnapshotExecutionOptions {
         tables,
         max_rows_per_table,
         chunk_size,
         start_sequence_by_table,
+        cursor_field,
+        last_cursor_by_table,
     }
 }
 
@@ -870,6 +905,7 @@ runtime: {}
                 last_chunk_key: Some("users/0".to_string()),
                 completed: true,
                 updated_at_unix_ms: 1,
+                last_cursor_value: None,
             },
         );
         ledger.tables.insert(
@@ -880,6 +916,7 @@ runtime: {}
                 last_chunk_key: Some("orders/2".to_string()),
                 completed: false,
                 updated_at_unix_ms: 2,
+                last_cursor_value: None,
             },
         );
 
@@ -931,6 +968,7 @@ runtime: {}
                     last_chunk_key: Some(format!("{table}/0")),
                     completed: true,
                     updated_at_unix_ms: 1,
+                    last_cursor_value: None,
                 },
             );
         }

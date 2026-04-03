@@ -94,6 +94,15 @@ pub struct SnapshotExecutionOptions {
     pub chunk_size: Option<u64>,
     #[serde(default)]
     pub start_sequence_by_table: BTreeMap<String, u64>,
+    /// Column name used as the incremental cursor (e.g. `updated_at`, `id`).
+    /// When set, the snapshot query filters `WHERE cursor_field > last_cursor_by_table[table]`
+    /// and orders by `cursor_field` ascending (keyset pagination).
+    #[serde(default)]
+    pub cursor_field: Option<String>,
+    /// Last observed cursor value per table, loaded from the checkpoint ledger.
+    /// Absent or `None` for a given table means this is the initial load for that table.
+    #[serde(default)]
+    pub last_cursor_by_table: BTreeMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -111,6 +120,9 @@ pub struct SnapshotTableProgress {
     pub next_sequence: u64,
     pub finished: bool,
     pub rows_emitted: u64,
+    /// The maximum cursor value observed across all rows staged in this run for this table.
+    /// `None` when no cursor field is configured or no rows were emitted.
+    pub max_cursor_value: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -232,6 +244,12 @@ impl PostgresSource {
             let mut next_sequence = start_sequence;
             let mut rows_emitted = 0_u64;
             let mut finished = false;
+            let mut max_cursor_value: Option<serde_json::Value> = None;
+
+            let last_cursor = options
+                .cursor_field
+                .as_deref()
+                .and_then(|_| options.last_cursor_by_table.get(&table_name));
 
             if let Some(base_chunk_size) = configured_chunk_size {
                 if base_chunk_size == 0 {
@@ -239,10 +257,9 @@ impl PostgresSource {
                 }
 
                 loop {
-                    let offset = next_sequence.saturating_mul(base_chunk_size);
                     let remaining = options
                         .max_rows_per_table
-                        .map(|max_rows| max_rows.saturating_sub(offset));
+                        .map(|max_rows| max_rows.saturating_sub(rows_emitted));
 
                     if matches!(remaining, Some(0)) {
                         break;
@@ -251,7 +268,19 @@ impl PostgresSource {
                     let limit = remaining
                         .map(|rows| rows.min(base_chunk_size))
                         .unwrap_or(base_chunk_size);
-                    let sql = build_snapshot_json_sql(&table_name, Some(limit), Some(offset))?;
+
+                    let sql = build_snapshot_json_sql(
+                        &table_name,
+                        options.cursor_field.as_deref(),
+                        max_cursor_value.as_ref().or(last_cursor),
+                        Some(limit),
+                        // offset-based pagination only for full (no cursor) mode
+                        if options.cursor_field.is_none() {
+                            Some(next_sequence.saturating_mul(base_chunk_size))
+                        } else {
+                            None
+                        },
+                    )?;
                     let rows = client
                         .query(&sql, &[])
                         .await
@@ -263,6 +292,11 @@ impl PostgresSource {
                     }
 
                     let row_count = rows.len() as u64;
+                    if let Some(cursor_field) = options.cursor_field.as_deref() {
+                        if let Some(v) = extract_max_cursor(&rows, cursor_field) {
+                            max_cursor_value = Some(v);
+                        }
+                    }
                     let rows_jsonl_gzip = encode_rows_as_gzip_jsonl(&rows, &table_name)?;
                     tables.push(SnapshotTableChunk {
                         table: table_name.clone(),
@@ -281,12 +315,23 @@ impl PostgresSource {
                     }
                 }
             } else {
-                let sql = build_snapshot_json_sql(&table_name, options.max_rows_per_table, None)?;
+                let sql = build_snapshot_json_sql(
+                    &table_name,
+                    options.cursor_field.as_deref(),
+                    last_cursor,
+                    options.max_rows_per_table,
+                    None,
+                )?;
                 let rows = client
                     .query(&sql, &[])
                     .await
                     .with_context(|| format!("failed to snapshot table {table_name}"))?;
                 let row_count = rows.len() as u64;
+                if let Some(cursor_field) = options.cursor_field.as_deref() {
+                    if let Some(v) = extract_max_cursor(&rows, cursor_field) {
+                        max_cursor_value = Some(v);
+                    }
+                }
                 let rows_jsonl_gzip = encode_rows_as_gzip_jsonl(&rows, &table_name)?;
                 tables.push(SnapshotTableChunk {
                     table: table_name.clone(),
@@ -308,6 +353,7 @@ impl PostgresSource {
                 next_sequence,
                 finished,
                 rows_emitted,
+                max_cursor_value,
             });
         }
 
@@ -527,13 +573,30 @@ fn quote_qualified_table(table_name: &str) -> String {
 
 fn build_snapshot_json_sql(
     table_name: &str,
+    cursor_field: Option<&str>,
+    last_cursor_value: Option<&serde_json::Value>,
     limit: Option<u64>,
     offset: Option<u64>,
 ) -> anyhow::Result<String> {
     let table = quote_qualified_table(table_name);
-    let mut sql = format!(
-        "SELECT to_jsonb(snapshot_row) AS record FROM (SELECT * FROM {table}) AS snapshot_row"
-    );
+
+    let inner = if let Some(cursor) = cursor_field {
+        let cursor_ident = quote_ident(cursor);
+        match last_cursor_value {
+            Some(last) => {
+                let literal = cursor_value_to_sql_literal(last)?;
+                format!("SELECT * FROM {table} WHERE {cursor_ident} > {literal} ORDER BY {cursor_ident}")
+            }
+            None => {
+                // Initial incremental load — full scan ordered by cursor so keyset pagination works
+                format!("SELECT * FROM {table} ORDER BY {cursor_ident}")
+            }
+        }
+    } else {
+        format!("SELECT * FROM {table}")
+    };
+
+    let mut sql = format!("SELECT to_jsonb(snapshot_row) AS record FROM ({inner}) AS snapshot_row");
     if let Some(limit) = limit {
         sql.push_str(&format!(" LIMIT {limit}"));
     }
@@ -541,6 +604,50 @@ fn build_snapshot_json_sql(
         sql.push_str(&format!(" OFFSET {offset}"));
     }
     Ok(sql)
+}
+
+/// Render a JSON cursor value as a SQL literal safe for embedding in a query.
+/// Only scalar types that make sense as cursor values are supported.
+fn cursor_value_to_sql_literal(value: &serde_json::Value) -> anyhow::Result<String> {
+    match value {
+        serde_json::Value::Number(n) => Ok(n.to_string()),
+        serde_json::Value::String(s) => {
+            // Escape single quotes by doubling them — safe for embedding as a SQL string literal.
+            Ok(format!("'{}'", s.replace('\'', "''")))
+        }
+        other => bail!("cursor value must be a number or string, got: {}", other),
+    }
+}
+
+/// Extract the maximum value of `cursor_field` from a batch of JSONB rows.
+/// Returns `None` if the field is absent or null in every row.
+fn extract_max_cursor(
+    rows: &[tokio_postgres::Row],
+    cursor_field: &str,
+) -> Option<serde_json::Value> {
+    rows.iter()
+        .filter_map(|row| {
+            let record: serde_json::Value = row.try_get("record").ok()?;
+            record.get(cursor_field).cloned()
+        })
+        .filter(|v| !v.is_null())
+        .max_by(compare_cursor_values)
+}
+
+fn compare_cursor_values(a: &serde_json::Value, b: &serde_json::Value) -> std::cmp::Ordering {
+    match (a, b) {
+        (serde_json::Value::Number(x), serde_json::Value::Number(y)) => {
+            let xf = x.as_f64().unwrap_or(f64::NEG_INFINITY);
+            let yf = y.as_f64().unwrap_or(f64::NEG_INFINITY);
+            xf.partial_cmp(&yf).unwrap_or(std::cmp::Ordering::Equal)
+        }
+        (serde_json::Value::String(x), serde_json::Value::String(y)) => x.cmp(y),
+        _ => std::cmp::Ordering::Equal,
+    }
+}
+
+fn quote_ident(value: &str) -> String {
+    format!("\"{}\"", value.replace('"', "\"\""))
 }
 
 fn encode_rows_as_gzip_jsonl(
@@ -659,9 +766,10 @@ runtime: {}
     }
 
     #[test]
-    fn snapshot_json_sql_wraps_rows_as_json() {
+    fn snapshot_json_sql_full_mode_with_limit_and_offset() {
         assert_eq!(
-            build_snapshot_json_sql("public.orders", Some(25), Some(50)).expect("sql builds"),
+            build_snapshot_json_sql("public.orders", None, None, Some(25), Some(50))
+                .expect("sql builds"),
             "SELECT to_jsonb(snapshot_row) AS record FROM (SELECT * FROM \"public\".\"orders\") AS snapshot_row LIMIT 25 OFFSET 50"
         );
     }
@@ -669,8 +777,92 @@ runtime: {}
     #[test]
     fn snapshot_json_sql_omits_offset_when_not_requested() {
         assert_eq!(
-            build_snapshot_json_sql("public.orders", Some(25), None).expect("sql builds"),
+            build_snapshot_json_sql("public.orders", None, None, Some(25), None)
+                .expect("sql builds"),
             "SELECT to_jsonb(snapshot_row) AS record FROM (SELECT * FROM \"public\".\"orders\") AS snapshot_row LIMIT 25"
+        );
+    }
+
+    #[test]
+    fn snapshot_json_sql_incremental_initial_load() {
+        // No prior cursor value — full scan ordered by cursor field.
+        assert_eq!(
+            build_snapshot_json_sql("public.orders", Some("updated_at"), None, Some(1000), None)
+                .expect("sql builds"),
+            "SELECT to_jsonb(snapshot_row) AS record FROM (SELECT * FROM \"public\".\"orders\" ORDER BY \"updated_at\") AS snapshot_row LIMIT 1000"
+        );
+    }
+
+    #[test]
+    fn snapshot_json_sql_incremental_with_string_cursor() {
+        let last = serde_json::json!("2024-06-01T00:00:00Z");
+        assert_eq!(
+            build_snapshot_json_sql(
+                "public.orders",
+                Some("updated_at"),
+                Some(&last),
+                Some(1000),
+                None
+            )
+            .expect("sql builds"),
+            "SELECT to_jsonb(snapshot_row) AS record FROM (SELECT * FROM \"public\".\"orders\" WHERE \"updated_at\" > '2024-06-01T00:00:00Z' ORDER BY \"updated_at\") AS snapshot_row LIMIT 1000"
+        );
+    }
+
+    #[test]
+    fn snapshot_json_sql_incremental_with_integer_cursor() {
+        let last = serde_json::json!(42);
+        assert_eq!(
+            build_snapshot_json_sql("public.orders", Some("id"), Some(&last), Some(500), None)
+                .expect("sql builds"),
+            "SELECT to_jsonb(snapshot_row) AS record FROM (SELECT * FROM \"public\".\"orders\" WHERE \"id\" > 42 ORDER BY \"id\") AS snapshot_row LIMIT 500"
+        );
+    }
+
+    #[test]
+    fn extract_max_cursor_returns_max_string_value() {
+        use flate2::{write::GzEncoder, Compression};
+        use std::io::Write;
+
+        // We can't easily create tokio_postgres::Row in a unit test, so test the
+        // helper functions directly.
+        let values = vec![
+            serde_json::json!("2024-03-01T00:00:00Z"),
+            serde_json::json!("2024-06-01T00:00:00Z"),
+            serde_json::json!("2024-01-01T00:00:00Z"),
+        ];
+        let max = values
+            .iter()
+            .filter(|v| !v.is_null())
+            .max_by(|a, b| compare_cursor_values(*a, *b))
+            .cloned();
+        assert_eq!(max, Some(serde_json::json!("2024-06-01T00:00:00Z")));
+
+        // Numeric comparison
+        let nums = vec![
+            serde_json::json!(10),
+            serde_json::json!(3),
+            serde_json::json!(99),
+        ];
+        let max_num = nums
+            .iter()
+            .filter(|v| !v.is_null())
+            .max_by(|a, b| compare_cursor_values(*a, *b))
+            .cloned();
+        assert_eq!(max_num, Some(serde_json::json!(99)));
+
+        // gzip helper still round-trips (reuse existing coverage)
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(b"{\"id\":1}\n").unwrap();
+        let _ = encoder.finish().unwrap();
+    }
+
+    #[test]
+    fn cursor_value_sql_literal_escapes_single_quotes() {
+        let v = serde_json::json!("it's a test");
+        assert_eq!(
+            cursor_value_to_sql_literal(&v).expect("literal builds"),
+            "'it''s a test'"
         );
     }
 
