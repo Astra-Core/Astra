@@ -432,6 +432,8 @@ pub struct SnapshotTableCheckpoint {
     pub last_chunk_key: Option<String>,
     pub completed: bool,
     pub updated_at_unix_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_cursor_value: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone)]
@@ -508,6 +510,7 @@ impl LocalCheckpointStore {
         sequence: u64,
         row_count: u64,
         chunk_key: &str,
+        cursor_value: Option<serde_json::Value>,
     ) -> Result<SnapshotCheckpointLedger> {
         let mut ledger = self.load(pipeline_name)?;
         let now = unix_time_ms();
@@ -516,6 +519,25 @@ impl LocalCheckpointStore {
         checkpoint.rows_staged = checkpoint.rows_staged.saturating_add(row_count);
         checkpoint.last_chunk_key = Some(chunk_key.to_string());
         checkpoint.completed = false;
+        checkpoint.updated_at_unix_ms = now;
+        if cursor_value.is_some() {
+            checkpoint.last_cursor_value = cursor_value;
+        }
+        ledger.updated_at_unix_ms = now;
+        self.save(&ledger)?;
+        Ok(ledger)
+    }
+
+    pub fn update_cursor_value(
+        &self,
+        pipeline_name: &str,
+        table_name: &str,
+        cursor_value: serde_json::Value,
+    ) -> Result<SnapshotCheckpointLedger> {
+        let mut ledger = self.load(pipeline_name)?;
+        let now = unix_time_ms();
+        let checkpoint = ledger.tables.entry(table_name.to_string()).or_default();
+        checkpoint.last_cursor_value = Some(cursor_value);
         checkpoint.updated_at_unix_ms = now;
         ledger.updated_at_unix_ms = now;
         self.save(&ledger)?;
@@ -783,6 +805,7 @@ mod tests {
                 0,
                 500,
                 "dev/pipelines/postgres-analytics/streams/public.orders/partitions/default/chunks/00000000000000000000.jsonl.gz",
+                None,
             )
             .expect("checkpoint writes");
         store
@@ -797,6 +820,70 @@ mod tests {
         assert_eq!(
             checkpoint.last_chunk_key.as_deref(),
             Some("dev/pipelines/postgres-analytics/streams/public.orders/partitions/default/chunks/00000000000000000000.jsonl.gz")
+        );
+
+        fs::remove_dir_all(root_dir).ok();
+    }
+
+    #[test]
+    fn checkpoint_store_persists_cursor_value() {
+        let root_dir = temp_root("checkpoint-cursor");
+        let store = LocalCheckpointStore::new(root_dir.clone());
+
+        store
+            .record_chunk_staged(
+                "postgres-analytics",
+                "public.orders",
+                0,
+                100,
+                "some/chunk/key",
+                Some(serde_json::json!("2024-06-01T00:00:00Z")),
+            )
+            .expect("checkpoint with cursor writes");
+
+        let ledger = store.load("postgres-analytics").expect("ledger loads");
+        let checkpoint = ledger.tables.get("public.orders").expect("table exists");
+        assert_eq!(
+            checkpoint.last_cursor_value,
+            Some(serde_json::json!("2024-06-01T00:00:00Z"))
+        );
+
+        // A subsequent chunk with a later cursor overwrites the stored value.
+        store
+            .record_chunk_staged(
+                "postgres-analytics",
+                "public.orders",
+                1,
+                50,
+                "some/chunk/key2",
+                Some(serde_json::json!("2024-07-01T00:00:00Z")),
+            )
+            .expect("second checkpoint writes");
+
+        let ledger = store.load("postgres-analytics").expect("ledger loads");
+        let checkpoint = ledger.tables.get("public.orders").expect("table exists");
+        assert_eq!(
+            checkpoint.last_cursor_value,
+            Some(serde_json::json!("2024-07-01T00:00:00Z"))
+        );
+
+        // Passing None does not clear the stored cursor value.
+        store
+            .record_chunk_staged(
+                "postgres-analytics",
+                "public.orders",
+                2,
+                10,
+                "some/chunk/key3",
+                None,
+            )
+            .expect("third checkpoint writes");
+
+        let ledger = store.load("postgres-analytics").expect("ledger loads");
+        let checkpoint = ledger.tables.get("public.orders").expect("table exists");
+        assert_eq!(
+            checkpoint.last_cursor_value,
+            Some(serde_json::json!("2024-07-01T00:00:00Z"))
         );
 
         fs::remove_dir_all(root_dir).ok();

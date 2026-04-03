@@ -25,6 +25,8 @@ pub enum ValidationError {
     MissingPostgresTables,
     #[error("snapshot.chunkSize must be greater than zero")]
     InvalidChunkSize,
+    #[error("snapshot.cursorField is required when snapshot.mode is incremental")]
+    MissingCursorField,
     #[error("destination.write.batchSize must be greater than zero")]
     InvalidBatchSize,
     #[error("destination.staging.kind must not be empty")]
@@ -99,6 +101,8 @@ pub struct Snapshot {
     pub mode: SnapshotMode,
     #[serde(default, rename = "chunkSize")]
     pub chunk_size: Option<u64>,
+    #[serde(default, rename = "cursorField")]
+    pub cursor_field: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -221,6 +225,16 @@ impl AstraSpec {
         if let Some(snapshot) = &self.source.capture.snapshot {
             if matches!(snapshot.chunk_size, Some(0)) {
                 return Err(ValidationError::InvalidChunkSize);
+            }
+            if snapshot.mode == SnapshotMode::Incremental
+                && snapshot
+                    .cursor_field
+                    .as_deref()
+                    .map(str::trim)
+                    .unwrap_or("")
+                    .is_empty()
+            {
+                return Err(ValidationError::MissingCursorField);
             }
         }
         if matches!(self.destination.write.batch_size, Some(0)) {
@@ -761,6 +775,126 @@ runtime: {}
         .expect_err("missing capture targets rejected");
 
         assert_eq!(error, ValidationError::MissingCaptureTargets);
+    }
+
+    #[test]
+    fn rejects_incremental_snapshot_without_cursor_field() {
+        let error = validate_yaml(
+            r#"
+version: v1alpha1
+pipeline:
+  name: missing-cursor
+  mode: snapshot
+  schedule: manual
+source:
+  kind: postgres
+  connection:
+    host: localhost
+    port: 5432
+    database: app
+    username: app_user
+  capture:
+    tables:
+      - public.users
+    snapshot:
+      mode: incremental
+destination:
+  kind: postgres
+  connection:
+    host: localhost
+    port: 5432
+    database: warehouse
+    username: warehouse_user
+  staging:
+    kind: local
+    bucket: astra-staging
+  write:
+    mode: append
+runtime: {}
+"#,
+        )
+        .expect_err("missing cursor field rejected");
+
+        assert_eq!(error, ValidationError::MissingCursorField);
+    }
+
+    #[test]
+    fn accepts_incremental_snapshot_with_cursor_field() {
+        validate_yaml(
+            r#"
+version: v1alpha1
+pipeline:
+  name: incremental-with-cursor
+  mode: snapshot
+  schedule: manual
+source:
+  kind: postgres
+  connection:
+    host: localhost
+    port: 5432
+    database: app
+    username: app_user
+  capture:
+    tables:
+      - public.users
+    snapshot:
+      mode: incremental
+      cursorField: updated_at
+destination:
+  kind: postgres
+  connection:
+    host: localhost
+    port: 5432
+    database: warehouse
+    username: warehouse_user
+  staging:
+    kind: local
+    bucket: astra-staging
+  write:
+    mode: append
+runtime: {}
+"#,
+        )
+        .expect("incremental with cursor field should be valid");
+    }
+
+    #[test]
+    fn accepts_full_snapshot_without_cursor_field() {
+        validate_yaml(
+            r#"
+version: v1alpha1
+pipeline:
+  name: full-no-cursor
+  mode: snapshot
+  schedule: manual
+source:
+  kind: postgres
+  connection:
+    host: localhost
+    port: 5432
+    database: app
+    username: app_user
+  capture:
+    tables:
+      - public.users
+    snapshot:
+      mode: full
+destination:
+  kind: postgres
+  connection:
+    host: localhost
+    port: 5432
+    database: warehouse
+    username: warehouse_user
+  staging:
+    kind: local
+    bucket: astra-staging
+  write:
+    mode: append
+runtime: {}
+"#,
+        )
+        .expect("full snapshot without cursor field should be valid");
     }
 
     fn validate_yaml(raw: &str) -> Result<(), ValidationError> {

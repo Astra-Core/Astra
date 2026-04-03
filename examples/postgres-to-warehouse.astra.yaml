@@ -17,6 +17,7 @@ source:
       - public.orders
     snapshot:
       mode: incremental
+      cursorField: updated_at
       chunkSize: 50000
 destination:
   kind: snowflake
