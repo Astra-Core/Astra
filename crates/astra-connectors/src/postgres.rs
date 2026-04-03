@@ -631,7 +631,7 @@ fn extract_max_cursor(
             record.get(cursor_field).cloned()
         })
         .filter(|v| !v.is_null())
-        .max_by(|a, b| compare_cursor_values(a, b))
+        .max_by(compare_cursor_values)
 }
 
 fn compare_cursor_values(a: &serde_json::Value, b: &serde_json::Value) -> std::cmp::Ordering {
@@ -834,7 +834,7 @@ runtime: {}
         let max = values
             .iter()
             .filter(|v| !v.is_null())
-            .max_by(|a, b| compare_cursor_values(a, b))
+            .max_by(compare_cursor_values)
             .cloned();
         assert_eq!(max, Some(serde_json::json!("2024-06-01T00:00:00Z")));
 
@@ -847,7 +847,7 @@ runtime: {}
         let max_num = nums
             .iter()
             .filter(|v| !v.is_null())
-            .max_by(|a, b| compare_cursor_values(a, b))
+            .max_by(compare_cursor_values)
             .cloned();
         assert_eq!(max_num, Some(serde_json::json!(99)));
 
