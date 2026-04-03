@@ -1,3 +1,6 @@
+use crate::repositories::{
+    PipelineRecord, PipelineRunRecord, StagedArtifactRecord, TableExecutionRecord,
+};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -9,6 +12,18 @@ pub struct PipelineSummaryResponse {
     pub destination_kind: String,
     pub status: String,
     pub spec_version: i32,
+}
+
+impl From<PipelineRecord> for PipelineSummaryResponse {
+    fn from(record: PipelineRecord) -> Self {
+        Self {
+            name: record.name,
+            source_kind: record.source_kind,
+            destination_kind: record.destination_kind,
+            status: record.status.to_string(),
+            spec_version: record.spec_version,
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -57,6 +72,23 @@ pub struct PipelineRunResponse {
     pub stats_json: Option<serde_json::Value>,
 }
 
+impl From<PipelineRunRecord> for PipelineRunResponse {
+    fn from(record: PipelineRunRecord) -> Self {
+        Self {
+            id: record.id,
+            pipeline_name: record.pipeline_name,
+            trigger_mode: record.trigger_mode,
+            status: record.status,
+            worker_id: record.worker_id,
+            started_at: record.started_at,
+            finished_at: record.finished_at,
+            created_at: record.created_at,
+            updated_at: record.updated_at,
+            stats_json: record.stats_json,
+        }
+    }
+}
+
 #[derive(Debug, Serialize)]
 pub struct PipelineRunsResponse {
     pub runs: Vec<PipelineRunResponse>,
@@ -97,6 +129,27 @@ pub struct StagedArtifactResponse {
     pub created_at: DateTime<Utc>,
 }
 
+impl From<StagedArtifactRecord> for StagedArtifactResponse {
+    fn from(record: StagedArtifactRecord) -> Self {
+        Self {
+            id: record.id,
+            pipeline_run_id: record.pipeline_run_id,
+            stream_name: record.stream_name,
+            partition_key: record.partition_key,
+            sequence: record.sequence,
+            bucket: record.bucket,
+            object_key: record.object_key,
+            bytes_written: record.bytes_written,
+            row_count: record.row_count,
+            content_type: record.content_type,
+            content_encoding: record.content_encoding,
+            schema_fingerprint: record.schema_fingerprint,
+            metadata_json: record.metadata_json,
+            created_at: record.created_at,
+        }
+    }
+}
+
 #[derive(Debug, Serialize)]
 pub struct StagedArtifactsResponse {
     pub artifacts: Vec<StagedArtifactResponse>,
@@ -134,6 +187,26 @@ pub struct TableExecutionResponse {
     pub started_at: DateTime<Utc>,
     pub finished_at: Option<DateTime<Utc>>,
     pub updated_at: DateTime<Utc>,
+}
+
+impl From<TableExecutionRecord> for TableExecutionResponse {
+    fn from(record: TableExecutionRecord) -> Self {
+        Self {
+            id: record.id,
+            stream_name: record.stream_name,
+            status: record.status,
+            rows_processed: record.rows_processed,
+            rows_total: record.rows_total,
+            error_summary: record.error_summary,
+            checkpoint_next_sequence: record.checkpoint_next_sequence,
+            checkpoint_rows_staged: record.checkpoint_rows_staged,
+            checkpoint_last_chunk_key: record.checkpoint_last_chunk_key,
+            checkpoint_completed: record.checkpoint_completed,
+            started_at: record.started_at,
+            finished_at: record.finished_at,
+            updated_at: record.updated_at,
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]
