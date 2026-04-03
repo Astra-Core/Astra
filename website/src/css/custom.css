@@ -32,6 +32,13 @@
 
 .hero--primary {
   background: linear-gradient(135deg, #0f0f1a 0%, #1a1a2e 50%, #16213e 100%);
+  color: #ffffff;
+  --ifm-hero-text-color: #ffffff;
+}
+
+.hero--primary .hero__title,
+.hero--primary .hero__subtitle {
+  color: #ffffff;
 }
 
 .hero__title {
