@@ -214,6 +214,11 @@ pub struct TableExecutionsResponse {
     pub tables: Vec<TableExecutionResponse>,
 }
 
+#[derive(Debug, Serialize)]
+pub struct TriggerPipelineResponse {
+    pub run_id: Uuid,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct UpsertTableExecutionRequest {
     pub stream_name: String,
