@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { WizardState, WizardStep } from '@/types';
+import type { SnapshotMode, WizardState, WizardStep } from '@/types';
 import { applySpec } from '@/api';
 import { generateWizardYaml } from '@/utils';
 import { Button } from '@/components/ui/button';
@@ -7,12 +7,16 @@ import { Input } from '@/components/ui/input';
 import { PrefixedInput } from '@/components/ui/prefixed-input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
-import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 
 const DEFAULT_WIZARD: WizardState = {
   step: 1,
   pipelineName: '',
+  snapshot: {
+    mode: 'full',
+    cursorField: '',
+    chunkSize: '50000',
+  },
   source: {
     host: 'localhost',
     port: '5432',
@@ -118,11 +122,32 @@ export function OnboardingWizard({ onApplied }: Props) {
               />
             </div>
             <div className="space-y-2">
-              <Label>Mode</Label>
-              <div className="flex items-center gap-3">
-                <Badge variant="muted">snapshot</Badge>
-                <span className="text-xs text-muted-foreground">Only snapshot mode is supported in v0.1.</span>
+              <Label>Snapshot mode</Label>
+              <div className="flex gap-2">
+                {(['full', 'incremental', 'none'] as SnapshotMode[]).map((m) => (
+                  <button
+                    key={m}
+                    type="button"
+                    onClick={() =>
+                      setWizard((prev) => ({ ...prev, snapshot: { ...prev.snapshot, mode: m } }))
+                    }
+                    className={[
+                      'px-3 py-1.5 rounded-md text-xs font-medium border transition-colors',
+                      wizard.snapshot.mode === m
+                        ? 'bg-primary text-primary-foreground border-primary'
+                        : 'bg-background text-muted-foreground border-border hover:border-foreground/40',
+                    ].join(' ')}
+                  >
+                    {m}
+                  </button>
+                ))}
               </div>
+              <p className="text-xs text-muted-foreground">
+                {wizard.snapshot.mode === 'full' && 'Re-reads the entire table on every run.'}
+                {wizard.snapshot.mode === 'incremental' &&
+                  'Reads only rows added or updated since the last run using a cursor column.'}
+                {wizard.snapshot.mode === 'none' && 'Skips snapshotting — use CDC only.'}
+              </p>
             </div>
             <div className="flex justify-end">
               <Button disabled={!wizard.pipelineName.trim()} onClick={() => setStep(2)}>
@@ -212,6 +237,51 @@ export function OnboardingWizard({ onApplied }: Props) {
                 }
               />
             </div>
+            {wizard.snapshot.mode !== 'none' && (
+              <div className="space-y-4 border-t border-border pt-4">
+                <h4 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+                  Snapshot settings
+                </h4>
+                {wizard.snapshot.mode === 'incremental' && (
+                  <div className="space-y-2">
+                    <Label htmlFor="wz-cursor">Cursor field</Label>
+                    <Input
+                      id="wz-cursor"
+                      placeholder="updated_at"
+                      value={wizard.snapshot.cursorField}
+                      onChange={(e) =>
+                        setWizard((prev) => ({
+                          ...prev,
+                          snapshot: { ...prev.snapshot, cursorField: e.target.value },
+                        }))
+                      }
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Column used to track new and updated rows. Must be indexed, non-nullable, and
+                      monotonically increasing (e.g. <code className="font-mono">updated_at</code>,{' '}
+                      <code className="font-mono">id</code>).
+                    </p>
+                  </div>
+                )}
+                <div className="space-y-2">
+                  <Label htmlFor="wz-chunk-size">Chunk size</Label>
+                  <Input
+                    id="wz-chunk-size"
+                    placeholder="50000"
+                    value={wizard.snapshot.chunkSize}
+                    onChange={(e) =>
+                      setWizard((prev) => ({
+                        ...prev,
+                        snapshot: { ...prev.snapshot, chunkSize: e.target.value },
+                      }))
+                    }
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Rows per staged chunk. Leave blank to fetch all rows in a single pass.
+                  </p>
+                </div>
+              </div>
+            )}
             <div className="flex justify-between">
               <Button variant="outline" onClick={() => setStep(1)}>
                 ← Back
@@ -221,7 +291,8 @@ export function OnboardingWizard({ onApplied }: Props) {
                   !wizard.source.host.trim() ||
                   !wizard.source.database.trim() ||
                   !wizard.source.username.trim() ||
-                  !wizard.source.tables.trim()
+                  !wizard.source.tables.trim() ||
+                  (wizard.snapshot.mode === 'incremental' && !wizard.snapshot.cursorField.trim())
                 }
                 onClick={() => setStep(3)}
               >

@@ -56,6 +56,22 @@ export function generateWizardYaml(w: WizardState): string {
     .map((t) => t.trim())
     .filter(Boolean);
   const tableLines = tables.map((t) => `      - ${yamlQuote(t)}`).join('\n');
+
+  const { mode, cursorField, chunkSize } = w.snapshot;
+  const chunkSizeNum = parseInt(chunkSize, 10);
+
+  let snapshotBlock = '';
+  if (mode !== 'none') {
+    const lines = [`      mode: ${mode}`];
+    if (mode === 'incremental' && cursorField.trim()) {
+      lines.push(`      cursorField: ${yamlQuote(cursorField.trim())}`);
+    }
+    if (!isNaN(chunkSizeNum) && chunkSizeNum > 0) {
+      lines.push(`      chunkSize: ${chunkSizeNum}`);
+    }
+    snapshotBlock = `    snapshot:\n${lines.join('\n')}\n`;
+  }
+
   return `version: v1alpha1
 pipeline:
   name: ${yamlQuote(pipelineName)}
@@ -72,10 +88,7 @@ source:
   capture:
     tables:
 ${tableLines}
-    snapshot:
-      mode: incremental
-      chunkSize: 50000
-destination:
+${snapshotBlock}destination:
   kind: postgres
   connection:
     host: ${yamlQuote(w.destination.host)}
