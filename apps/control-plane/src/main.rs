@@ -2,6 +2,7 @@ mod api;
 mod app;
 mod config;
 mod error;
+mod executor;
 mod http;
 mod metadata;
 mod models;

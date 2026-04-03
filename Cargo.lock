@@ -139,9 +139,11 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "astra-api",
+ "astra-connectors",
  "astra-core",
  "astra-metadata",
  "astra-observability",
+ "astra-runtime",
  "astra-secrets",
  "astra-yaml",
  "async-trait",

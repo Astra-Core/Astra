@@ -2,6 +2,7 @@ pub mod api;
 pub mod app;
 pub mod config;
 pub mod error;
+pub mod executor;
 pub mod http;
 pub mod metadata;
 pub mod models;

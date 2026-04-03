@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { Pipeline, RunHistoryState, TableExecutionState } from '@/types';
-import { fetchPipelines, fetchRunHistory, fetchTableExecutions, deletePipeline, disablePipeline, enablePipeline } from '@/api';
+import { fetchPipelines, fetchRunHistory, fetchTableExecutions, deletePipeline, disablePipeline, enablePipeline, triggerPipeline } from '@/api';
 import { formatDuration, formatTimestamp, formatRowProgress, runStatusVariant, tableStatusVariant } from '@/utils';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -141,6 +141,44 @@ export function PipelineList({ refreshToken }: Props) {
       });
   }
 
+  function handleRunPipeline(pipelineName: string) {
+    const key = `run-${pipelineName}`;
+    setActionLoading((a) => ({ ...a, [key]: true }));
+    triggerPipeline(pipelineName)
+      .then(() => {
+        // Expand runs panel so the user sees the new run appear
+        setExpandedPipelines((prev) => {
+          const next = new Set(prev);
+          next.add(pipelineName);
+          return next;
+        });
+        setRunHistories((h) => ({
+          ...h,
+          [pipelineName]: { loading: true, error: null, runs: h[pipelineName]?.runs ?? [] },
+        }));
+        fetchRunHistory(pipelineName)
+          .then((data) =>
+            setRunHistories((h) => ({ ...h, [pipelineName]: { loading: false, error: null, runs: data.runs } }))
+          )
+          .catch((err: unknown) =>
+            setRunHistories((h) => ({
+              ...h,
+              [pipelineName]: {
+                loading: false,
+                error: err instanceof Error ? err.message : 'Failed to load run history.',
+                runs: [],
+              },
+            }))
+          );
+      })
+      .catch((err: unknown) => {
+        alert(err instanceof Error ? err.message : `Failed to trigger pipeline "${pipelineName}".`);
+      })
+      .finally(() => {
+        setActionLoading((a) => ({ ...a, [key]: false }));
+      });
+  }
+
   return (
     <Card>
       <CardHeader className="flex-row items-center justify-between space-y-0">
@@ -166,6 +204,7 @@ export function PipelineList({ refreshToken }: Props) {
               const isDisabled = pipeline.status === 'disabled';
               const statusLoading = actionLoading[`status-${pipeline.name}`] ?? false;
               const deleteLoading = actionLoading[`delete-${pipeline.name}`] ?? false;
+              const runLoading = actionLoading[`run-${pipeline.name}`] ?? false;
 
               return (
                 <div key={`${pipeline.name}-${pipeline.spec_version}`}>
@@ -187,6 +226,14 @@ export function PipelineList({ refreshToken }: Props) {
                         onClick={() => handleToggleRuns(pipeline.name)}
                       >
                         {isExpanded ? 'Hide runs' : 'View runs'}
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={runLoading || isDisabled}
+                        onClick={() => handleRunPipeline(pipeline.name)}
+                      >
+                        {runLoading ? 'Running…' : 'Run'}
                       </Button>
                       <Button
                         variant="outline"

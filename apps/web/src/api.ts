@@ -74,3 +74,14 @@ export async function enablePipeline(pipelineName: string): Promise<PipelineSumm
   }
   return res.json() as Promise<PipelineSummaryResponse>;
 }
+
+export async function triggerPipeline(pipelineName: string): Promise<{ run_id: string }> {
+  const res = await fetch(`/api/v1/pipelines/${encodeURIComponent(pipelineName)}/trigger`, {
+    method: 'POST',
+  });
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(errorText || `Trigger failed with status ${res.status}`);
+  }
+  return res.json() as Promise<{ run_id: string }>;
+}

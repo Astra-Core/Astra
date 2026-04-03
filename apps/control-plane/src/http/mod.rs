@@ -27,6 +27,10 @@ pub fn routes() -> Router<AppState> {
             post(pipelines::enable_pipeline),
         )
         .route(
+            "/api/v1/pipelines/:pipeline_name/trigger",
+            post(pipelines::trigger_pipeline),
+        )
+        .route(
             "/api/v1/pipelines/:pipeline_name/runs",
             get(pipelines::list_pipeline_runs),
         )

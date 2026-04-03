@@ -3,7 +3,7 @@ use crate::{
     models::api::{
         ApplySpecRequest, CreatePipelineRunRequest, PipelineRunsResponse, PipelinesResponse,
         RecordStagedArtifactRequest, StagedArtifactsResponse, TableExecutionResponse,
-        TableExecutionsResponse, UpsertTableExecutionRequest,
+        TableExecutionsResponse, TriggerPipelineResponse, UpsertTableExecutionRequest,
     },
     repositories::RecordStagedArtifactRecord,
     state::AppState,
@@ -14,6 +14,7 @@ use axum::{
     http::StatusCode,
     Json,
 };
+use std::sync::Arc;
 use uuid::Uuid;
 
 pub async fn list_pipelines(
@@ -237,4 +238,34 @@ pub async fn enable_pipeline(
         .update_pipeline_status(&pipeline_name, PipelineStatus::Active)
         .await?;
     Ok(Json(pipeline))
+}
+
+pub async fn trigger_pipeline(
+    State(state): State<AppState>,
+    Path(pipeline_name): Path<String>,
+) -> Result<Json<TriggerPipelineResponse>, AppError> {
+    let yaml = state
+        .pipeline_service
+        .get_pipeline_yaml(&pipeline_name)
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("pipeline '{pipeline_name}' not found")))?;
+
+    let run = state
+        .pipeline_service
+        .create_pipeline_run(
+            pipeline_name,
+            "ui-trigger".to_string(),
+            Some("running".to_string()),
+            None,
+            None,
+        )
+        .await?;
+
+    let run_id = run.id;
+    let service = Arc::clone(&state.pipeline_service);
+    tokio::spawn(async move {
+        crate::executor::execute_pipeline(service, run_id, yaml).await;
+    });
+
+    Ok(Json(TriggerPipelineResponse { run_id }))
 }
