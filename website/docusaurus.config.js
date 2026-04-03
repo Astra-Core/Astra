@@ -8,11 +8,11 @@ const config = {
   tagline: 'Self-hostable data replication — a Rust-first alternative to Airbyte & Fivetran',
   favicon: 'img/favicon.ico',
 
-  url: 'https://suryachereddy.github.io',
-  baseUrl: '/Astra/',
+  url: 'https://astra-core.github.io',
+  baseUrl: '/',
 
-  organizationName: 'suryachereddy',
-  projectName: 'Astra',
+  organizationName: 'astra-core',
+  projectName: 'astra-core.github.io',
   deploymentBranch: 'gh-pages',
   trailingSlash: false,
 
@@ -31,7 +31,7 @@ const config = {
       ({
         docs: {
           sidebarPath: './sidebars.js',
-          editUrl: 'https://github.com/suryachereddy/Astra/edit/main/website/',
+          editUrl: 'https://github.com/astra-core/astra-core.github.io/edit/main/website/',
         },
         blog: false,
         theme: {
@@ -63,7 +63,7 @@ const config = {
             label: 'Docs',
           },
           {
-            href: 'https://github.com/suryachereddy/Astra',
+            href: 'https://github.com/astra-core/astra-core.github.io',
             label: 'GitHub',
             position: 'right',
           },
@@ -84,8 +84,9 @@ const config = {
           {
             title: 'Project',
             items: [
-              { label: 'GitHub', href: 'https://github.com/suryachereddy/Astra' },
-              { label: 'Changelog', href: 'https://github.com/suryachereddy/Astra/blob/main/CHANGELOG.md' },
+              { label: 'GitHub', href: 'https://github.com/astra-core/astra-core.github.io' },
+              { label: 'Changelog', href: 'https://github.com/astra-core/astra-core.github.io/blob/main/CHANGELOG.md' },
+
               { label: 'Contributing', to: '/docs/development/contributing' },
             ],
           },

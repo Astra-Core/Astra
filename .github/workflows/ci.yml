@@ -32,7 +32,7 @@ jobs:
               - 'Cargo.toml'
               - '.env.example'
               - 'deploy/**'
-              - 'docs/**'
+              - 'website/docs/**'
             scripts:
               - 'scripts/**'
 
@@ -49,8 +49,8 @@ jobs:
           test -f Cargo.toml
           test -f .env.example
           test -f deploy/docker-compose/docker-compose.yml
-          test -f docs/product/brief.md
-          test -f docs/architecture/rfc-0001-v1-architecture.md
+          test -f website/docs/intro.md
+          test -f website/docs/architecture/overview.md
       - name: Print scaffold summary
         run: |
           echo "Astra scaffold present"
