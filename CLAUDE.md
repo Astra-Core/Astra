@@ -51,7 +51,7 @@ python3 scripts/yaml_contract_smoke.py
 
 ## Architecture
 
-**Modular monolith** (see `docs/decisions/adr-0001-modular-monolith.md`): single control-plane binary with clean internal boundaries, Postgres for metadata, S3/MinIO for durable staging.
+**Modular monolith** (see `website/docs/architecture/modular-monolith.md`): single control-plane binary with clean internal boundaries, Postgres for metadata, S3/MinIO for durable staging.
 
 ### Workspace layout
 
@@ -80,7 +80,7 @@ python3 scripts/yaml_contract_smoke.py
 - **Service/Repository**: `PipelineService` is the only entry point to state; callers never touch the repo directly
 - **Trait-based storage backends**: swap Postgres ↔ in-memory without changing service code
 - **Spec-as-data**: YAML spec is parsed once, serialised to JSON, and shared across CLI, API, and UI
-- **Staging contract** (`docs/architecture/staging-contract.md`): local/S3/MinIO share the same `StageChunk` metadata schema
+- **Staging contract** (`website/docs/architecture/staging-contract.md`): local/S3/MinIO share the same `StageChunk` metadata schema
 - **Resumable workflows**: checkpoint ledger tracks processed chunks; snapshot can resume mid-run
 
 ### Environment variables
