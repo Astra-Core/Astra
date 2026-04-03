@@ -7,8 +7,39 @@ on:
   pull_request:
 
 jobs:
+  changes:
+    name: Detect changed paths
+    runs-on: ubuntu-latest
+    outputs:
+      rust: ${{ steps.filter.outputs.rust }}
+      web: ${{ steps.filter.outputs.web }}
+      repo: ${{ steps.filter.outputs.repo }}
+      scripts: ${{ steps.filter.outputs.scripts }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            rust:
+              - '**/*.rs'
+              - '**/Cargo.toml'
+              - 'Cargo.lock'
+            web:
+              - 'apps/web/**'
+            repo:
+              - 'README.md'
+              - 'Cargo.toml'
+              - '.env.example'
+              - 'deploy/**'
+              - 'docs/**'
+            scripts:
+              - 'scripts/**'
+
   repo-sanity:
     name: Repo sanity
+    needs: changes
+    if: needs.changes.outputs.repo == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -27,6 +58,8 @@ jobs:
 
   rust-foundation:
     name: Rust foundation
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -41,6 +74,8 @@ jobs:
 
   rust-tests:
     name: Rust tests
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -51,6 +86,8 @@ jobs:
 
   web-foundation:
     name: Web foundation
+    needs: changes
+    if: needs.changes.outputs.web == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -70,6 +107,8 @@ jobs:
 
   e2e-snapshot-smoke:
     name: E2E snapshot smoke
+    needs: changes
+    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.scripts == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
