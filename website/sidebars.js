@@ -1,0 +1,83 @@
+/** @type {import('@docusaurus/plugin-content-docs').SidebarsConfig} */
+const sidebars = {
+  docsSidebar: [
+    {
+      type: 'doc',
+      id: 'intro',
+      label: 'Introduction',
+    },
+    {
+      type: 'category',
+      label: 'Getting Started',
+      collapsed: false,
+      items: [
+        'getting-started/quickstart',
+        'getting-started/local-infrastructure',
+      ],
+    },
+    {
+      type: 'category',
+      label: 'YAML Spec',
+      items: [
+        'yaml-spec/overview',
+        'yaml-spec/examples',
+      ],
+    },
+    {
+      type: 'category',
+      label: 'CLI Reference',
+      items: [
+        'cli/reference',
+      ],
+    },
+    {
+      type: 'category',
+      label: 'Control Plane',
+      items: [
+        'control-plane/api',
+        'control-plane/web-ui',
+      ],
+    },
+    {
+      type: 'category',
+      label: 'Connectors',
+      items: [
+        'connectors/overview',
+        'connectors/postgres',
+      ],
+    },
+    {
+      type: 'category',
+      label: 'Architecture',
+      items: [
+        'architecture/overview',
+        'architecture/modular-monolith',
+        'architecture/data-flow',
+        'architecture/staging-contract',
+      ],
+    },
+    {
+      type: 'category',
+      label: 'Self-Hosting',
+      items: [
+        'self-hosting/docker-compose',
+        'self-hosting/environment-variables',
+      ],
+    },
+    {
+      type: 'category',
+      label: 'Development',
+      items: [
+        'development/contributing',
+        'development/crate-guide',
+      ],
+    },
+    {
+      type: 'doc',
+      id: 'roadmap',
+      label: 'Roadmap',
+    },
+  ],
+};
+
+module.exports = sidebars;
