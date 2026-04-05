@@ -1,4 +1,5 @@
 use crate::{
+    error::BadRequestError,
     models::api::{
         ApplySpecResponse, PipelineRunResponse, PipelineSummaryResponse, Progress,
         StagedArtifactResponse, TableExecutionResponse, UpsertTableExecutionRequest,
@@ -32,6 +33,9 @@ impl PipelineService {
         yaml: String,
         created_by: Option<String>,
     ) -> anyhow::Result<ApplySpecResponse> {
+        if yaml.trim().is_empty() {
+            anyhow::bail!(BadRequestError("yaml must not be empty".to_string()));
+        }
         let spec = astra_yaml::AstraSpec::parse_yaml(&yaml)?;
         spec.validate()?;
         if spec.requests_cdc() {
@@ -56,6 +60,16 @@ impl PipelineService {
         worker_id: Option<String>,
         started_at: Option<chrono::DateTime<Utc>>,
     ) -> anyhow::Result<PipelineRunResponse> {
+        if pipeline_name.trim().is_empty() {
+            anyhow::bail!(BadRequestError(
+                "pipeline_name must not be empty".to_string()
+            ));
+        }
+        if trigger_mode.trim().is_empty() {
+            anyhow::bail!(BadRequestError(
+                "trigger_mode must not be empty".to_string()
+            ));
+        }
         let run = self
             .repository
             .create_pipeline_run(CreatePipelineRunRecord {
@@ -101,6 +115,12 @@ impl PipelineService {
         &self,
         mut record: RecordStagedArtifactRecord,
     ) -> anyhow::Result<StagedArtifactResponse> {
+        if record.stream_name.trim().is_empty() {
+            anyhow::bail!(BadRequestError("stream_name must not be empty".to_string()));
+        }
+        if record.object_key.trim().is_empty() {
+            anyhow::bail!(BadRequestError("object_key must not be empty".to_string()));
+        }
         if record.metadata_json.is_null() {
             record.metadata_json = serde_json::json!({});
         }
@@ -135,6 +155,9 @@ impl PipelineService {
         pipeline_run_id: Uuid,
         request: UpsertTableExecutionRequest,
     ) -> anyhow::Result<TableExecutionResponse> {
+        if request.stream_name.trim().is_empty() {
+            anyhow::bail!(BadRequestError("stream_name must not be empty".to_string()));
+        }
         let record = UpsertTableExecutionRecord {
             pipeline_run_id,
             stream_name: request.stream_name,

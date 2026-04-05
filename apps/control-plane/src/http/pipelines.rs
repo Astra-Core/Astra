@@ -28,9 +28,6 @@ pub async fn apply_spec(
     State(state): State<AppState>,
     Json(request): Json<ApplySpecRequest>,
 ) -> Result<Json<crate::models::api::ApplySpecResponse>, AppError> {
-    if request.yaml.trim().is_empty() {
-        return Err(AppError::BadRequest("yaml must not be empty".to_string()));
-    }
     let response = state
         .pipeline_service
         .apply_spec(request.yaml, request.created_by)
@@ -42,17 +39,6 @@ pub async fn create_pipeline_run(
     State(state): State<AppState>,
     Json(request): Json<CreatePipelineRunRequest>,
 ) -> Result<Json<crate::models::api::PipelineRunResponse>, AppError> {
-    if request.pipeline_name.trim().is_empty() {
-        return Err(AppError::BadRequest(
-            "pipeline_name must not be empty".to_string(),
-        ));
-    }
-    if request.trigger_mode.trim().is_empty() {
-        return Err(AppError::BadRequest(
-            "trigger_mode must not be empty".to_string(),
-        ));
-    }
-
     let response = state
         .pipeline_service
         .create_pipeline_run(
@@ -116,17 +102,6 @@ pub async fn record_staged_artifact(
     Path(pipeline_run_id): Path<Uuid>,
     Json(request): Json<RecordStagedArtifactRequest>,
 ) -> Result<Json<crate::models::api::StagedArtifactResponse>, AppError> {
-    if request.stream_name.trim().is_empty() {
-        return Err(AppError::BadRequest(
-            "stream_name must not be empty".to_string(),
-        ));
-    }
-    if request.object_key.trim().is_empty() {
-        return Err(AppError::BadRequest(
-            "object_key must not be empty".to_string(),
-        ));
-    }
-
     let response = state
         .pipeline_service
         .record_staged_artifact(RecordStagedArtifactRecord {
@@ -194,12 +169,6 @@ pub async fn upsert_table_execution(
     Path(pipeline_run_id): Path<Uuid>,
     Json(request): Json<UpsertTableExecutionRequest>,
 ) -> Result<Json<TableExecutionResponse>, AppError> {
-    if request.stream_name.trim().is_empty() {
-        return Err(AppError::BadRequest(
-            "stream_name must not be empty".to_string(),
-        ));
-    }
-
     let response = state
         .pipeline_service
         .upsert_table_execution(pipeline_run_id, request)

@@ -10,6 +10,10 @@ use serde::Serialize;
 pub struct NotFoundError(pub String);
 
 #[derive(Debug, thiserror::Error)]
+#[error("{0}")]
+pub struct BadRequestError(pub String);
+
+#[derive(Debug, thiserror::Error)]
 pub enum AppError {
     #[error(transparent)]
     NotFound(#[from] NotFoundError),
@@ -46,6 +50,10 @@ impl From<anyhow::Error> for AppError {
 
         if let Some(not_found) = value.downcast_ref::<NotFoundError>() {
             return Self::NotFound(NotFoundError(not_found.0.clone()));
+        }
+
+        if let Some(bad_request) = value.downcast_ref::<BadRequestError>() {
+            return Self::BadRequest(bad_request.0.clone());
         }
 
         Self::Internal(value.to_string())
