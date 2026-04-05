@@ -1,8 +1,8 @@
 use anyhow::{Context, Result};
 use astra_control_plane::repositories::{
-    pipeline_repository::UpsertTableExecutionRecord, CreatePipelineRunRecord, PipelineRecord,
-    PipelineRepository, PipelineRunRecord, PostgresPipelineRepository, RecordStagedArtifactRecord,
-    StagedArtifactRecord,
+    pipeline_repository::UpsertTableExecutionRecord, ApplySpecRecord, CreatePipelineRunRecord,
+    PipelineRecord, PipelineRepository, PipelineRunRecord, PostgresPipelineRepository,
+    RecordStagedArtifactRecord, StagedArtifactRecord,
 };
 use astra_metadata::PipelineStatus;
 use astra_yaml::AstraSpec;
@@ -72,9 +72,20 @@ runtime:
     let raw_yaml = spec_yaml.to_string();
 
     // apply_spec
-    let applied = repo1
-        .apply_spec(spec.clone(), raw_yaml.clone(), None)
-        .await?;
+    let apply_record = ApplySpecRecord {
+        name: spec.pipeline.name.clone(),
+        source_kind: spec.source.kind.clone(),
+        destination_kind: spec.destination.kind.clone(),
+        mode: serde_json::to_value(&spec.pipeline.mode)
+            .ok()
+            .and_then(|v| v.as_str().map(str::to_owned))
+            .unwrap_or_default(),
+        spec_version: spec.version.clone(),
+        spec_json: serde_json::to_value(&spec).context("serialize spec")?,
+        raw_yaml: raw_yaml.clone(),
+        created_by: None,
+    };
+    let applied = repo1.apply_spec(apply_record).await?;
     assert_eq!(applied.pipeline.name, pipeline_name);
     assert_eq!(applied.pipeline.status, PipelineStatus::Active);
 
@@ -306,7 +317,20 @@ runtime:
     let spec: AstraSpec = serde_yaml::from_str(spec_yaml)?;
     let raw_yaml = spec_yaml.to_string();
 
-    repo.apply_spec(spec, raw_yaml, None).await?;
+    let apply_record = ApplySpecRecord {
+        name: spec.pipeline.name.clone(),
+        source_kind: spec.source.kind.clone(),
+        destination_kind: spec.destination.kind.clone(),
+        mode: serde_json::to_value(&spec.pipeline.mode)
+            .ok()
+            .and_then(|v| v.as_str().map(str::to_owned))
+            .unwrap_or_default(),
+        spec_version: spec.version.clone(),
+        spec_json: serde_json::to_value(&spec)?,
+        raw_yaml: raw_yaml.clone(),
+        created_by: None,
+    };
+    repo.apply_spec(apply_record).await?;
 
     let pipelines: Vec<PipelineRecord> = repo.list_pipelines().await?;
     assert!(pipelines.iter().any(|p| p.name == pipeline_name));

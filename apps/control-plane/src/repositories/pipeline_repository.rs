@@ -5,6 +5,18 @@ use serde_json::Value;
 use uuid::Uuid;
 
 #[derive(Debug, Clone)]
+pub struct ApplySpecRecord {
+    pub name: String,
+    pub source_kind: String,
+    pub destination_kind: String,
+    pub mode: String,
+    pub spec_version: String,
+    pub spec_json: serde_json::Value,
+    pub raw_yaml: String,
+    pub created_by: Option<String>,
+}
+
+#[derive(Debug, Clone)]
 pub struct PipelineRecord {
     pub name: String,
     pub source_kind: String,
@@ -118,12 +130,7 @@ pub trait PipelineRepository: Send + Sync {
         stats_json: serde_json::Value,
     ) -> anyhow::Result<PipelineRunRecord>;
     async fn list_pipelines(&self) -> anyhow::Result<Vec<PipelineRecord>>;
-    async fn apply_spec(
-        &self,
-        spec: astra_yaml::AstraSpec,
-        raw_yaml: String,
-        created_by: Option<String>,
-    ) -> anyhow::Result<AppliedPipelineRecord>;
+    async fn apply_spec(&self, record: ApplySpecRecord) -> anyhow::Result<AppliedPipelineRecord>;
     async fn create_pipeline_run(
         &self,
         run: CreatePipelineRunRecord,

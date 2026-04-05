@@ -4,7 +4,7 @@ use crate::{
         StagedArtifactResponse, TableExecutionResponse, UpsertTableExecutionRequest,
     },
     repositories::{
-        CreatePipelineRunRecord, PipelineRepository, RecordStagedArtifactRecord,
+        ApplySpecRecord, CreatePipelineRunRecord, PipelineRepository, RecordStagedArtifactRecord,
         UpsertTableExecutionRecord,
     },
 };
@@ -39,7 +39,22 @@ impl PipelineService {
                 "spec apply does not execute CDC yet. Astra's Postgres source is currently limited to schema discovery and snapshot staging; remove pipeline.mode=cdc and source.capture.cdc before applying this spec."
             );
         }
-        let applied = self.repository.apply_spec(spec, yaml, created_by).await?;
+        let spec_json = serde_json::to_value(&spec)
+            .map_err(|e| anyhow::anyhow!("failed to serialize spec to JSON: {}", e))?;
+        let record = ApplySpecRecord {
+            name: spec.pipeline.name.clone(),
+            source_kind: spec.source.kind.clone(),
+            destination_kind: spec.destination.kind.clone(),
+            mode: serde_json::to_value(&spec.pipeline.mode)
+                .ok()
+                .and_then(|v| v.as_str().map(str::to_owned))
+                .unwrap_or_else(|| format!("{:?}", spec.pipeline.mode).to_lowercase()),
+            spec_version: spec.version.clone(),
+            spec_json,
+            raw_yaml: yaml,
+            created_by,
+        };
+        let applied = self.repository.apply_spec(record).await?;
         Ok(ApplySpecResponse {
             pipeline_name: applied.pipeline.name,
             spec_version: applied.pipeline.spec_version,
