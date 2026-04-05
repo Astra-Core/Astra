@@ -6,7 +6,6 @@ use crate::{
         UpsertTableExecutionRecord,
     },
 };
-use anyhow::anyhow;
 use astra_metadata::PipelineStatus;
 use async_trait::async_trait;
 use chrono::Utc;
@@ -70,7 +69,7 @@ impl PipelineRepository for InMemoryPipelineRepository {
             run.updated_at = Utc::now();
             Ok(run.clone())
         } else {
-            Err(anyhow!("pipeline run {} not found", run_id))
+            Err(anyhow::Error::new(NotFoundError(run_id.to_string())))
         }
     }
 
@@ -130,7 +129,7 @@ impl PipelineRepository for InMemoryPipelineRepository {
     ) -> anyhow::Result<PipelineRunRecord> {
         let pipelines = self.inner.read().await;
         if !pipelines.contains_key(&run.pipeline_name) {
-            return Err(anyhow!("pipeline '{}' does not exist", run.pipeline_name));
+            return Err(anyhow::Error::new(NotFoundError(run.pipeline_name.clone())));
         }
         drop(pipelines);
 
@@ -214,10 +213,9 @@ impl PipelineRepository for InMemoryPipelineRepository {
     ) -> anyhow::Result<StagedArtifactRecord> {
         let runs = self.runs.read().await;
         if !runs.contains_key(&artifact.pipeline_run_id) {
-            return Err(anyhow!(
-                "pipeline run '{}' does not exist",
-                artifact.pipeline_run_id
-            ));
+            return Err(anyhow::Error::new(NotFoundError(
+                artifact.pipeline_run_id.to_string(),
+            )));
         }
         drop(runs);
 
@@ -287,10 +285,9 @@ impl PipelineRepository for InMemoryPipelineRepository {
     ) -> anyhow::Result<TableExecutionRecord> {
         let runs = self.runs.read().await;
         if !runs.contains_key(&record.pipeline_run_id) {
-            return Err(anyhow!(
-                "pipeline run '{}' does not exist",
-                record.pipeline_run_id
-            ));
+            return Err(anyhow::Error::new(NotFoundError(
+                record.pipeline_run_id.to_string(),
+            )));
         }
         drop(runs);
 
