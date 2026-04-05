@@ -1,9 +1,9 @@
 use crate::{
     error::NotFoundError,
     repositories::{
-        AppliedPipelineRecord, CreatePipelineRunRecord, PipelineRecord, PipelineRepository,
-        PipelineRunRecord, RecordStagedArtifactRecord, StagedArtifactRecord, TableExecutionRecord,
-        UpsertTableExecutionRecord,
+        AppliedPipelineRecord, ApplySpecRecord, CreatePipelineRunRecord, PipelineRecord,
+        PipelineRepository, PipelineRunRecord, RecordStagedArtifactRecord, StagedArtifactRecord,
+        TableExecutionRecord, UpsertTableExecutionRecord,
     },
 };
 use anyhow::{anyhow, Context};
@@ -126,19 +126,15 @@ impl PipelineRepository for PostgresPipelineRepository {
             .collect::<anyhow::Result<Vec<_>>>()?)
     }
 
-    async fn apply_spec(
-        &self,
-        spec: astra_yaml::AstraSpec,
-        raw_yaml: String,
-        created_by: Option<String>,
-    ) -> anyhow::Result<AppliedPipelineRecord> {
-        let pipeline_name = spec.pipeline.name.clone();
-        let source_kind = spec.source.kind.clone();
-        let destination_kind = spec.destination.kind.clone();
+    async fn apply_spec(&self, record: ApplySpecRecord) -> anyhow::Result<AppliedPipelineRecord> {
+        let pipeline_name = record.name.clone();
+        let source_kind = record.source_kind.clone();
+        let destination_kind = record.destination_kind.clone();
         let status = PipelineStatus::Active;
-        let spec_version_label = spec.version.clone();
-        let spec_model: Value =
-            serde_json::to_value(&spec).context("failed to serialize normalized spec JSON")?;
+        let spec_version_label = record.spec_version.clone();
+        let spec_model: Value = record.spec_json.clone();
+        let raw_yaml = record.raw_yaml.clone();
+        let created_by = record.created_by.clone();
         let content_hash = hash_content(&raw_yaml);
 
         let mut client = self

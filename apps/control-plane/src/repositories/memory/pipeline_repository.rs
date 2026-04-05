@@ -1,9 +1,9 @@
 use crate::{
     error::NotFoundError,
     repositories::{
-        AppliedPipelineRecord, CreatePipelineRunRecord, PipelineRecord, PipelineRepository,
-        PipelineRunRecord, RecordStagedArtifactRecord, StagedArtifactRecord, TableExecutionRecord,
-        UpsertTableExecutionRecord,
+        AppliedPipelineRecord, ApplySpecRecord, CreatePipelineRunRecord, PipelineRecord,
+        PipelineRepository, PipelineRunRecord, RecordStagedArtifactRecord, StagedArtifactRecord,
+        TableExecutionRecord, UpsertTableExecutionRecord,
     },
 };
 use astra_metadata::PipelineStatus;
@@ -80,15 +80,10 @@ impl PipelineRepository for InMemoryPipelineRepository {
         Ok(items)
     }
 
-    async fn apply_spec(
-        &self,
-        spec: astra_yaml::AstraSpec,
-        raw_yaml: String,
-        created_by: Option<String>,
-    ) -> anyhow::Result<AppliedPipelineRecord> {
+    async fn apply_spec(&self, record: ApplySpecRecord) -> anyhow::Result<AppliedPipelineRecord> {
         let mut guard = self.inner.write().await;
-        let name = spec.pipeline.name.clone();
-        let content_hash = hash_content(&raw_yaml);
+        let name = record.name.clone();
+        let content_hash = hash_content(&record.raw_yaml);
 
         let next_version = match guard.get(&name) {
             Some(existing) if existing.latest_hash == content_hash => existing.record.spec_version,
@@ -96,29 +91,29 @@ impl PipelineRepository for InMemoryPipelineRepository {
             None => 1,
         };
 
-        let record = PipelineRecord {
+        let pipeline_record = PipelineRecord {
             name: name.clone(),
-            source_kind: spec.source.kind.clone(),
-            destination_kind: spec.destination.kind.clone(),
+            source_kind: record.source_kind.clone(),
+            destination_kind: record.destination_kind.clone(),
             status: PipelineStatus::Active,
             spec_version: next_version,
         };
 
         let stored = StoredPipeline {
-            record: record.clone(),
+            record: pipeline_record.clone(),
             latest_hash: content_hash.clone(),
             pipeline_id: Uuid::new_v4(),
             source_id: Uuid::new_v4(),
             destination_id: Uuid::new_v4(),
             active_spec_id: Uuid::new_v4(),
-            raw_yaml,
-            created_by,
+            raw_yaml: record.raw_yaml,
+            created_by: record.created_by,
             updated_at: Utc::now(),
         };
         guard.insert(name, stored);
 
         Ok(AppliedPipelineRecord {
-            pipeline: record,
+            pipeline: pipeline_record,
             content_hash,
         })
     }
