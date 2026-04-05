@@ -9,49 +9,55 @@ use crate::{
 use anyhow::{anyhow, Context};
 use astra_metadata::PipelineStatus;
 use async_trait::async_trait;
+use deadpool_postgres::{Manager, Pool};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
-use std::{str::FromStr, sync::Arc};
-use tokio::sync::Mutex;
-use tokio_postgres::{types::Json, Client, NoTls, Row};
+use std::str::FromStr;
+use tokio_postgres::{types::Json, NoTls, Row};
 use uuid::Uuid;
 
 refinery::embed_migrations!("migrations");
 
 #[derive(Clone)]
 pub struct PostgresPipelineRepository {
-    client: Arc<Mutex<Client>>,
+    pool: Pool,
 }
 
 impl PostgresPipelineRepository {
     pub async fn connect(database_url: &str) -> anyhow::Result<Self> {
-        let (mut client, connection) = tokio_postgres::connect(database_url, NoTls)
-            .await
+        let pg_config = tokio_postgres::Config::from_str(database_url)
+            .with_context(|| format!("failed to parse ASTRA_DATABASE_URL: {database_url}"))?;
+
+        let manager = Manager::new(pg_config, NoTls);
+        let pool = Pool::builder(manager)
+            .max_size(16)
+            .build()
             .with_context(|| {
-                format!("failed to connect to Postgres using ASTRA_DATABASE_URL: {database_url}")
+                format!("failed to create Postgres pool using ASTRA_DATABASE_URL: {database_url}")
             })?;
 
-        tokio::spawn(async move {
-            if let Err(error) = connection.await {
-                tracing::error!(?error, "postgres connection task exited");
-            }
-        });
-
+        let mut conn = pool
+            .get()
+            .await
+            .context("failed to obtain pool connection for schema migrations")?;
         migrations::runner()
-            .run_async(&mut client)
+            .run_async(&mut **conn)
             .await
             .context("failed to run schema migrations")?;
+        drop(conn);
 
-        Ok(Self {
-            client: Arc::new(Mutex::new(client)),
-        })
+        Ok(Self { pool })
     }
 }
 
 #[async_trait]
 impl PipelineRepository for PostgresPipelineRepository {
     async fn get_pipeline_yaml(&self, pipeline_name: &str) -> anyhow::Result<Option<String>> {
-        let client = self.client.lock().await;
+        let client = self
+            .pool
+            .get()
+            .await
+            .context("failed to obtain pool connection")?;
         let row = client
             .query_opt(
                 r#"
@@ -73,7 +79,11 @@ impl PipelineRepository for PostgresPipelineRepository {
         status: String,
         stats_json: serde_json::Value,
     ) -> anyhow::Result<PipelineRunRecord> {
-        let client = self.client.lock().await;
+        let client = self
+            .pool
+            .get()
+            .await
+            .context("failed to obtain pool connection")?;
         let row = client.query_one(
             r#"
             UPDATE pipeline_runs pr
@@ -90,11 +100,14 @@ impl PipelineRepository for PostgresPipelineRepository {
         ).await.context("failed to update run status")?;
         Ok(map_pipeline_run_row(row))
     }
+
     async fn list_pipelines(&self) -> anyhow::Result<Vec<PipelineRecord>> {
-        let rows = self
-            .client
-            .lock()
+        let client = self
+            .pool
+            .get()
             .await
+            .context("failed to obtain pool connection")?;
+        let rows = client
             .query(
                 r#"
                 SELECT p.name, p.source_kind, p.destination_kind, p.status, COALESCE(ps.version, 0) AS spec_version
@@ -128,7 +141,11 @@ impl PipelineRepository for PostgresPipelineRepository {
             serde_json::to_value(&spec).context("failed to serialize normalized spec JSON")?;
         let content_hash = hash_content(&raw_yaml);
 
-        let mut client = self.client.lock().await;
+        let mut client = self
+            .pool
+            .get()
+            .await
+            .context("failed to obtain pool connection")?;
         let transaction = client
             .transaction()
             .await
@@ -255,10 +272,12 @@ impl PipelineRepository for PostgresPipelineRepository {
         &self,
         run: CreatePipelineRunRecord,
     ) -> anyhow::Result<PipelineRunRecord> {
-        let row = self
-            .client
-            .lock()
+        let client = self
+            .pool
+            .get()
             .await
+            .context("failed to obtain pool connection")?;
+        let row = client
             .query_one(
                 r#"
                 INSERT INTO pipeline_runs (id, pipeline_id, trigger_mode, status, worker_id, started_at)
@@ -286,10 +305,12 @@ impl PipelineRepository for PostgresPipelineRepository {
         &self,
         pipeline_name: &str,
     ) -> anyhow::Result<Vec<PipelineRunRecord>> {
-        let rows = self
-            .client
-            .lock()
+        let client = self
+            .pool
+            .get()
             .await
+            .context("failed to obtain pool connection")?;
+        let rows = client
             .query(
                 r#"
                 SELECT pr.id, p.name AS pipeline_name, pr.trigger_mode, pr.status, pr.worker_id,
@@ -311,10 +332,12 @@ impl PipelineRepository for PostgresPipelineRepository {
         &self,
         pipeline_name: &str,
     ) -> anyhow::Result<Option<PipelineRunRecord>> {
-        let row = self
-            .client
-            .lock()
+        let client = self
+            .pool
+            .get()
             .await
+            .context("failed to obtain pool connection")?;
+        let row = client
             .query_opt(
                 r#"
                 SELECT pr.id, p.name AS pipeline_name, pr.trigger_mode, pr.status, pr.worker_id,
@@ -340,10 +363,12 @@ impl PipelineRepository for PostgresPipelineRepository {
         pipeline_name: &str,
         limit: usize,
     ) -> anyhow::Result<Vec<PipelineRunRecord>> {
-        let rows = self
-            .client
-            .lock()
+        let client = self
+            .pool
+            .get()
             .await
+            .context("failed to obtain pool connection")?;
+        let rows = client
             .query(
                 r#"
                 SELECT pr.id, p.name AS pipeline_name, pr.trigger_mode, pr.status, pr.worker_id,
@@ -368,10 +393,12 @@ impl PipelineRepository for PostgresPipelineRepository {
         &self,
         artifact: RecordStagedArtifactRecord,
     ) -> anyhow::Result<StagedArtifactRecord> {
-        let row = self
-            .client
-            .lock()
+        let client = self
+            .pool
+            .get()
             .await
+            .context("failed to obtain pool connection")?;
+        let row = client
             .query_one(
                 r#"
                 INSERT INTO staged_artifacts (
@@ -400,7 +427,12 @@ impl PipelineRepository for PostgresPipelineRepository {
                 ],
             )
             .await
-            .with_context(|| format!("failed to record staged artifact for run '{}'", artifact.pipeline_run_id))?;
+            .with_context(|| {
+                format!(
+                    "failed to record staged artifact for run '{}'",
+                    artifact.pipeline_run_id
+                )
+            })?;
 
         Ok(map_staged_artifact_row(row))
     }
@@ -409,10 +441,12 @@ impl PipelineRepository for PostgresPipelineRepository {
         &self,
         pipeline_run_id: Uuid,
     ) -> anyhow::Result<Vec<StagedArtifactRecord>> {
-        let rows = self
-            .client
-            .lock()
+        let client = self
+            .pool
+            .get()
             .await
+            .context("failed to obtain pool connection")?;
+        let rows = client
             .query(
                 r#"
                 SELECT id, pipeline_run_id, stream_name, partition_key, sequence, bucket, object_key,
@@ -425,7 +459,12 @@ impl PipelineRepository for PostgresPipelineRepository {
                 &[&pipeline_run_id],
             )
             .await
-            .with_context(|| format!("failed to list staged artifacts for run '{}'", pipeline_run_id))?;
+            .with_context(|| {
+                format!(
+                    "failed to list staged artifacts for run '{}'",
+                    pipeline_run_id
+                )
+            })?;
 
         Ok(rows.into_iter().map(map_staged_artifact_row).collect())
     }
@@ -434,10 +473,12 @@ impl PipelineRepository for PostgresPipelineRepository {
         &self,
         pipeline_run_id: Uuid,
     ) -> anyhow::Result<Vec<TableExecutionRecord>> {
-        let rows = self
-            .client
-            .lock()
+        let client = self
+            .pool
+            .get()
             .await
+            .context("failed to obtain pool connection")?;
+        let rows = client
             .query(
                 r#"
                 SELECT id, pipeline_run_id, stream_name, status, rows_processed, rows_total,
@@ -465,7 +506,11 @@ impl PipelineRepository for PostgresPipelineRepository {
         &self,
         record: UpsertTableExecutionRecord,
     ) -> anyhow::Result<TableExecutionRecord> {
-        let client = self.client.lock().await;
+        let client = self
+            .pool
+            .get()
+            .await
+            .context("failed to obtain pool connection")?;
         let row = client.query_one(
             r#"
             INSERT INTO table_executions (
@@ -512,10 +557,12 @@ impl PipelineRepository for PostgresPipelineRepository {
     }
 
     async fn delete_pipeline(&self, pipeline_name: &str) -> anyhow::Result<()> {
-        let rows_affected = self
-            .client
-            .lock()
+        let client = self
+            .pool
+            .get()
             .await
+            .context("failed to obtain pool connection")?;
+        let rows_affected = client
             .execute("DELETE FROM pipelines WHERE name = $1", &[&pipeline_name])
             .await
             .with_context(|| format!("failed to delete pipeline '{}'", pipeline_name))?;
@@ -531,10 +578,12 @@ impl PipelineRepository for PostgresPipelineRepository {
         pipeline_name: &str,
         status: PipelineStatus,
     ) -> anyhow::Result<PipelineRecord> {
-        let row = self
-            .client
-            .lock()
+        let client = self
+            .pool
+            .get()
             .await
+            .context("failed to obtain pool connection")?;
+        let row = client
             .query_opt(
                 r#"
                 UPDATE pipelines
