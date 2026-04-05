@@ -9,10 +9,15 @@ use serde::Serialize;
 #[error("pipeline '{0}' not found")]
 pub struct NotFoundError(pub String);
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum AppError {
+    #[error(transparent)]
+    NotFound(#[from] NotFoundError),
+    #[error(transparent)]
+    Validation(#[from] astra_yaml::ValidationError),
+    #[error("bad request: {0}")]
     BadRequest(String),
-    NotFound(String),
+    #[error("internal error: {0}")]
     Internal(String),
 }
 
@@ -24,8 +29,9 @@ struct ErrorBody {
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         let (status, message) = match self {
+            Self::NotFound(e) => (StatusCode::NOT_FOUND, e.to_string()),
+            Self::Validation(e) => (StatusCode::BAD_REQUEST, e.to_string()),
             Self::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg),
-            Self::NotFound(msg) => (StatusCode::NOT_FOUND, msg),
             Self::Internal(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
         };
         (status, Json(ErrorBody { error: message })).into_response()
@@ -39,15 +45,9 @@ impl From<anyhow::Error> for AppError {
         }
 
         if let Some(not_found) = value.downcast_ref::<NotFoundError>() {
-            return Self::NotFound(not_found.to_string());
+            return Self::NotFound(NotFoundError(not_found.0.clone()));
         }
 
         Self::Internal(value.to_string())
-    }
-}
-
-impl From<astra_yaml::ValidationError> for AppError {
-    fn from(value: astra_yaml::ValidationError) -> Self {
-        Self::BadRequest(value.to_string())
     }
 }
