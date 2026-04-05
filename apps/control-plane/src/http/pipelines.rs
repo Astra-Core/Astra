@@ -1,5 +1,5 @@
 use crate::{
-    error::AppError,
+    error::{AppError, NotFoundError},
     models::api::{
         ApplySpecRequest, CreatePipelineRunRequest, PipelineRunsResponse, PipelinesResponse,
         RecordStagedArtifactRequest, StagedArtifactsResponse, TableExecutionResponse,
@@ -248,7 +248,7 @@ pub async fn trigger_pipeline(
         .pipeline_service
         .get_pipeline_yaml(&pipeline_name)
         .await?
-        .ok_or_else(|| AppError::NotFound(format!("pipeline '{pipeline_name}' not found")))?;
+        .ok_or_else(|| AppError::NotFound(NotFoundError(pipeline_name.clone())))?;
 
     let run = state
         .pipeline_service
