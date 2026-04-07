@@ -9,6 +9,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- `connectionRef` field on `source` and `destination` in the `v1alpha1` YAML spec — allows referencing a named saved connection instead of inlining credentials. Mutually exclusive with the inline `connection` block; specifying both returns a new `AmbiguousConnection` validation error.
 - `AstraError` enum in `astra-metadata` — structured error type with retryable/permanent classification and machine-readable `code()` field (`CONNECTION_FAILED`, `QUERY_FAILED`, `STAGING_FAILED`, `VALIDATION_ERROR`, `NOT_FOUND`, `INTERNAL_ERROR`).
 - `AppError::Astra` variant in the control plane — `AstraError` values propagate directly to HTTP responses with correct status codes (404, 400, 502, 500).
 - HTTP error responses now include `{ "error": "...", "code": "...", "retryable": bool }` instead of just `{ "error": "..." }`.
