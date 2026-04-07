@@ -87,6 +87,7 @@ python3 scripts/yaml_contract_smoke.py
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
+| `ASTRA_LOG` | `info` | Log level / filter for CLI and control plane (tracing `EnvFilter` syntax, e.g. `astra=debug`) |
 | `ASTRA_CONTROL_PLANE_ADDR` | `127.0.0.1:8080` | Bind address |
 | `ASTRA_DATABASE_URL` | _(none — in-memory)_ | Postgres metadata DB |
 | `ASTRA_S3_ENDPOINT` | — | MinIO/S3 endpoint |

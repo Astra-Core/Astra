@@ -12,6 +12,7 @@ use chrono::Utc;
 use reqwest::Client;
 use serde_json::{json, Value};
 use std::{collections::BTreeMap, path::PathBuf};
+use tracing::{debug, info};
 
 pub fn validate(file: &str) -> anyhow::Result<()> {
     let spec = AstraSpec::from_file(file)?;
@@ -22,19 +23,18 @@ pub fn validate(file: &str) -> anyhow::Result<()> {
         None
     };
 
-    println!("valid Astra spec: {}", spec.pipeline.name);
-    println!("mode: {:?}", spec.pipeline.mode);
-    println!(
-        "source: {} -> destination: {}",
-        spec.source.kind, spec.destination.kind
+    info!(
+        pipeline = %spec.pipeline.name,
+        mode = ?spec.pipeline.mode,
+        source = %spec.source.kind,
+        destination = %spec.destination.kind,
+        "valid Astra spec"
     );
     if let Some(source) = source {
-        println!("postgres tables: {}", source.config().tables.join(", "));
+        info!(tables = %source.config().tables.join(", "), "postgres tables");
     }
     if spec.requests_cdc() {
-        println!(
-            "note: CDC settings are modeled in the spec, but Astra does not execute Postgres CDC yet; use discovery/snapshot commands only."
-        );
+        info!("note: CDC settings are modeled in the spec, but Astra does not execute Postgres CDC yet; use discovery/snapshot commands only.");
     }
     Ok(())
 }
@@ -43,8 +43,8 @@ pub fn apply(file: &str) -> anyhow::Result<()> {
     let spec = AstraSpec::from_file(file)?;
     spec.validate()?;
     ensure_cdc_runtime_not_requested(&spec, "apply")?;
-    println!("apply stub for validated pipeline: {}", spec.pipeline.name);
-    println!("next step: send normalized spec to control-plane API");
+    info!(pipeline = %spec.pipeline.name, "apply stub for validated pipeline");
+    info!("next step: send normalized spec to control-plane API");
     Ok(())
 }
 
@@ -56,7 +56,7 @@ pub async fn discover_source(file: &str) -> anyhow::Result<()> {
         .discover(PostgresDiscoverOptions { tables: vec![] })
         .await?;
 
-    println!("discovered postgres source: {}", spec.pipeline.name);
+    info!(pipeline = %spec.pipeline.name, "discovered postgres source");
     println!("tables:");
     for table in &report.catalog.tables {
         println!("- {}", table.fully_qualified_name);
@@ -162,12 +162,15 @@ pub async fn snapshot_to_local_staging(
         None
     };
 
-    println!("discovered postgres source: {}", spec.pipeline.name);
-    println!("catalog tables: {}", discovery.catalog.tables.len());
-    println!("local staging root: {}", root_dir.display());
-    println!("local checkpoint root: {}", checkpoint_root.display());
+    info!(
+        pipeline = %spec.pipeline.name,
+        catalog_tables = discovery.catalog.tables.len(),
+        staging_root = %root_dir.display(),
+        checkpoint_root = %checkpoint_root.display(),
+        "discovered postgres source"
+    );
     if no_resume {
-        println!("resume mode: disabled (--no-resume)");
+        info!("resume mode: disabled (--no-resume)");
     } else {
         let resumable = existing_ledger
             .tables
@@ -179,12 +182,13 @@ pub async fn snapshot_to_local_staging(
             .iter()
             .filter(|(_, cp)| cp.completed)
             .count();
-        println!(
-            "resume mode: enabled ({} resumable table(s), {} completed table(s) from ledger)",
-            resumable, completed
+        info!(
+            resumable_tables = resumable,
+            completed_tables = completed,
+            "resume mode: enabled"
         );
     }
-    println!("staged chunks:");
+    info!("staging chunks");
 
     for table in snapshot.tables {
         let chunk = store
@@ -239,20 +243,16 @@ pub async fn snapshot_to_local_staging(
                 )
                 .await?;
         }
-        println!(
-            "- {} -> {} rows -> {}",
-            table.table,
-            chunk.row_count,
-            resolved.display()
+        info!(
+            table = %table.table,
+            rows = chunk.row_count,
+            path = %resolved.display(),
+            "staged chunk"
         );
-        println!("  sql: {}", table.sql);
-        println!(
-            "  chunk: bucket={} key={} bytes={} sequence={}",
-            chunk.bucket, chunk.object_key, chunk.bytes_written, chunk.sequence
-        );
+        debug!(sql = %table.sql, bucket = %chunk.bucket, key = %chunk.object_key, bytes = chunk.bytes_written, sequence = chunk.sequence, "chunk detail");
     }
 
-    println!("table progress:");
+    info!("recording table progress");
     for progress in snapshot.table_progress {
         if let Some(cursor_value) = progress.max_cursor_value.clone() {
             checkpoint_store.update_cursor_value(
@@ -292,17 +292,20 @@ pub async fn snapshot_to_local_staging(
                 )
                 .await?;
         }
-        println!(
-            "- {} -> next_sequence={} rows_emitted={} finished={}",
-            progress.table, progress.next_sequence, progress.rows_emitted, progress.finished
+        info!(
+            table = %progress.table,
+            next_sequence = progress.next_sequence,
+            rows_emitted = progress.rows_emitted,
+            finished = progress.finished,
+            "table progress"
         );
     }
 
     let final_ledger = checkpoint_store.load(&spec.pipeline.name)?;
-    println!(
-        "checkpoint ledger: {} ({} table checkpoint(s))",
-        checkpoint_store.ledger_path(&spec.pipeline.name).display(),
-        final_ledger.tables.len()
+    info!(
+        ledger_path = %checkpoint_store.ledger_path(&spec.pipeline.name).display(),
+        table_checkpoints = final_ledger.tables.len(),
+        "checkpoint ledger updated"
     );
 
     if let (Some(control_plane), Some(run_id)) = (&control_plane, run_id.as_deref()) {
@@ -383,11 +386,13 @@ pub async fn snapshot_to_minio_staging(
     let store = MinioStageChunkStore::new(config.clone());
     store.ensure_ready().await?;
 
-    println!("discovered postgres source: {}", spec.pipeline.name);
-    println!("catalog tables: {}", discovery.catalog.tables.len());
-    println!("minio endpoint: {}", config.endpoint);
-    println!("staging bucket: {}", config.storage.bucket);
-    println!("staged chunks:");
+    info!(
+        pipeline = %spec.pipeline.name,
+        catalog_tables = discovery.catalog.tables.len(),
+        minio_endpoint = %config.endpoint,
+        staging_bucket = %config.storage.bucket,
+        "discovered postgres source, staging to MinIO"
+    );
 
     for table in snapshot.tables {
         let chunk = store
@@ -400,12 +405,8 @@ pub async fn snapshot_to_minio_staging(
             })
             .await?;
 
-        println!("- {} -> {} rows", table.table, chunk.row_count);
-        println!("  sql: {}", table.sql);
-        println!(
-            "  chunk: s3://{}/{} bytes={}",
-            chunk.bucket, chunk.object_key, chunk.bytes_written
-        );
+        info!(table = %table.table, rows = chunk.row_count, "staged chunk");
+        debug!(sql = %table.sql, s3_path = %format!("s3://{}/{}", chunk.bucket, chunk.object_key), bytes = chunk.bytes_written, "chunk detail");
     }
 
     Ok(())
@@ -426,8 +427,8 @@ pub async fn execute_local_snapshot(
     ensure_supported_snapshot_source(&spec)?;
     ensure_supported_local_snapshot_destination(&spec)?;
 
-    println!("local snapshot execution: {}", spec.pipeline.name);
-    println!("stage 1/2: snapshot -> local staging");
+    info!(pipeline = %spec.pipeline.name, "local snapshot execution started");
+    info!("stage 1/2: snapshot -> local staging");
     snapshot_to_local_staging(
         file,
         max_rows_per_table,
@@ -439,13 +440,10 @@ pub async fn execute_local_snapshot(
     )
     .await?;
 
-    println!("stage 2/2: local staging -> postgres");
+    info!("stage 2/2: local staging -> postgres");
     load_local_staging_to_postgres(file, staging_root, control_plane_url).await?;
 
-    println!(
-        "local snapshot execution complete: {} (snapshot -> local staging -> postgres)",
-        spec.pipeline.name
-    );
+    info!(pipeline = %spec.pipeline.name, "local snapshot execution complete: snapshot -> local staging -> postgres");
 
     Ok(())
 }
@@ -507,16 +505,12 @@ pub async fn load_local_staging_to_postgres(
     }
 
     let report = loader.load_local_stage_chunks(chunk_payloads).await?;
-    println!(
-        "loaded staged chunks into postgres raw schema: {}",
-        report.schema
+    info!(
+        schema = %report.schema,
+        destination_host = %format!("{}:{}", loader.config().host, loader.config().port),
+        staging_root = %root_dir.display(),
+        "loaded staged chunks into postgres raw schema"
     );
-    println!(
-        "destination host: {}:{}",
-        loader.config().host,
-        loader.config().port
-    );
-    println!("local staging root: {}", root_dir.display());
     for chunk in &report.applied_chunks {
         if let (Some(control_plane), Some(run_id)) = (&control_plane, run_id.as_deref()) {
             control_plane
@@ -534,17 +528,13 @@ pub async fn load_local_staging_to_postgres(
                 )
                 .await?;
         }
-        println!(
-            "- {} -> {} ({})",
-            chunk.object_key,
-            chunk.table_name,
-            if chunk.skipped {
-                "already applied"
-            } else {
-                "applied"
-            }
+        info!(
+            object_key = %chunk.object_key,
+            table = %chunk.table_name,
+            status = if chunk.skipped { "already applied" } else { "applied" },
+            "chunk applied"
         );
-        println!("  rows written: {}", chunk.rows_written);
+        debug!(rows_written = chunk.rows_written, "chunk rows written");
     }
 
     if let (Some(control_plane), Some(run_id)) = (&control_plane, run_id.as_deref()) {

@@ -3,8 +3,16 @@ pub mod commands;
 
 use clap::Parser;
 use cli::{Cli, Command};
+use tracing_subscriber::EnvFilter;
 
 pub async fn run() -> anyhow::Result<()> {
+    let filter = EnvFilter::try_from_env("ASTRA_LOG").unwrap_or_else(|_| EnvFilter::new("info"));
+    tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_target(false)
+        .with_writer(std::io::stderr)
+        .init();
+
     let cli = Cli::parse();
     dispatch(cli.command).await
 }
