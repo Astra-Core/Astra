@@ -103,3 +103,22 @@ See `.env.example` for a full reference.
 **Working**: YAML validation, Postgres schema discovery, local snapshot → JSONL.gz staging with resumption, MinIO staging, raw Postgres loading, control-plane API + web UI, in-memory and Postgres-backed persistence.
 
 **Stubbed / not yet implemented**: CDC execution (returns explicit error), Python connector runtime, secrets management beyond `env:KEY`, observability, worker pool, schema evolution, multi-table parallelism.
+
+## Pre-PR Checklist
+
+Before raising a pull request, ensure the following:
+
+### Documentation updates (required when functionality changes)
+
+If your changes affect any of the following, update the relevant documentation **before** opening the PR:
+
+- **New or changed CLI commands** → update `website/docs/cli/` and the `Commands` section of this file
+- **New or changed API endpoints** → update `website/docs/control-plane/`
+- **New or changed YAML spec fields** (`v1alpha1`) → update `website/docs/yaml-spec/`
+- **New or changed connector behaviour** → update `website/docs/connectors/`
+- **New or changed environment variables** → update the `Environment variables` table in this file and `.env.example`
+- **New or changed architecture / data flow** → update `website/docs/architecture/`
+- **Newly implemented stubs** → move items from the *Stubbed / not yet implemented* list above to the *Working* list
+- **`CHANGELOG.md`** → add an entry describing the change under the appropriate version heading
+
+> **Rule of thumb**: if a reviewer would need to understand your change to use or operate Astra correctly, the docs must be updated in the same PR.
