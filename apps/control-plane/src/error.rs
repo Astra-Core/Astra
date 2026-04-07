@@ -1,3 +1,4 @@
+use astra_metadata::AstraError;
 use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
@@ -23,22 +24,76 @@ pub enum AppError {
     BadRequest(String),
     #[error("internal error: {0}")]
     Internal(String),
+    /// Typed Astra error surfaced from the service or connector layer.
+    #[error(transparent)]
+    Astra(#[from] AstraError),
 }
 
 #[derive(Serialize)]
 struct ErrorBody {
     error: String,
+    code: String,
+    retryable: bool,
 }
 
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
-        let (status, message) = match self {
-            Self::NotFound(e) => (StatusCode::NOT_FOUND, e.to_string()),
-            Self::Validation(e) => (StatusCode::BAD_REQUEST, e.to_string()),
-            Self::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg),
-            Self::Internal(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
+        let (status, body) = match self {
+            Self::NotFound(e) => (
+                StatusCode::NOT_FOUND,
+                ErrorBody {
+                    error: e.to_string(),
+                    code: "NOT_FOUND".to_string(),
+                    retryable: false,
+                },
+            ),
+            Self::Validation(e) => (
+                StatusCode::BAD_REQUEST,
+                ErrorBody {
+                    error: e.to_string(),
+                    code: "VALIDATION_ERROR".to_string(),
+                    retryable: false,
+                },
+            ),
+            Self::BadRequest(msg) => (
+                StatusCode::BAD_REQUEST,
+                ErrorBody {
+                    error: msg,
+                    code: "BAD_REQUEST".to_string(),
+                    retryable: false,
+                },
+            ),
+            Self::Internal(msg) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                ErrorBody {
+                    error: msg,
+                    code: "INTERNAL_ERROR".to_string(),
+                    retryable: false,
+                },
+            ),
+            Self::Astra(astra_err) => {
+                let status = match &astra_err {
+                    AstraError::NotFound(_) => StatusCode::NOT_FOUND,
+                    AstraError::ValidationError(_) => StatusCode::BAD_REQUEST,
+                    AstraError::ConnectionFailed { .. }
+                    | AstraError::QueryFailed { .. }
+                    | AstraError::StagingFailed { .. } => StatusCode::BAD_GATEWAY,
+                    AstraError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
+                };
+                let retryable = astra_err.is_retryable();
+                let code = astra_err.code().to_string();
+                let error = astra_err.to_string();
+                (
+                    status,
+                    ErrorBody {
+                        error,
+                        code,
+                        retryable,
+                    },
+                )
+            }
         };
-        (status, Json(ErrorBody { error: message })).into_response()
+        (status, Json(body)).into_response()
     }
 }
 
