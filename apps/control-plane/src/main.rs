@@ -15,10 +15,12 @@ use api::ApiModule;
 use config::ConfigModule;
 use metadata::MetadataModule;
 use repositories::{
-    memory::InMemoryPipelineRepository, postgres::PostgresPipelineRepository, PipelineRepository,
+    memory::{InMemoryConnectionRepository, InMemoryPipelineRepository},
+    postgres::PostgresPipelineRepository,
+    ConnectionRepository, PipelineRepository,
 };
 use scheduler::SchedulerModule;
-use services::PipelineService;
+use services::{ConnectionService, PipelineService};
 use state::AppState;
 use std::{net::SocketAddr, sync::Arc};
 
@@ -35,9 +37,13 @@ async fn main() -> anyhow::Result<()> {
     let api = ApiModule::new();
     let scheduler = SchedulerModule::new();
     let metadata = MetadataModule::new();
-    let repository = build_repository(&config).await;
-    let pipeline_service = Arc::new(PipelineService::new(repository));
-    let state = AppState::new(pipeline_service);
+    let (pipeline_repo, connection_repo) = build_repositories(&config).await;
+    let connection_service = Arc::new(ConnectionService::new(connection_repo));
+    let pipeline_service = Arc::new(PipelineService::new(
+        pipeline_repo,
+        connection_service.clone(),
+    ));
+    let state = AppState::new(pipeline_service, connection_service);
     let app = app::build_router(state);
 
     tracing::info!(
@@ -56,12 +62,15 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn build_repository(config: &ConfigModule) -> Arc<dyn PipelineRepository> {
+async fn build_repositories(
+    config: &ConfigModule,
+) -> (Arc<dyn PipelineRepository>, Arc<dyn ConnectionRepository>) {
     if let Some(database_url) = config.database_url.as_deref() {
         match PostgresPipelineRepository::connect(database_url).await {
             Ok(repository) => {
                 tracing::info!("using Postgres pipeline repository");
-                return Arc::new(repository);
+                let repo = Arc::new(repository);
+                return (repo.clone(), repo);
             }
             Err(error) => {
                 tracing::warn!(
@@ -74,5 +83,8 @@ async fn build_repository(config: &ConfigModule) -> Arc<dyn PipelineRepository> 
         tracing::info!("ASTRA_DATABASE_URL not set; using in-memory pipeline repository");
     }
 
-    Arc::new(InMemoryPipelineRepository::default())
+    (
+        Arc::new(InMemoryPipelineRepository::default()),
+        Arc::new(InMemoryConnectionRepository::default()),
+    )
 }

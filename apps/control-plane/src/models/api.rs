@@ -1,5 +1,6 @@
 use crate::repositories::{
-    PipelineRecord, PipelineRunRecord, StagedArtifactRecord, TableExecutionRecord,
+    PipelineRecord, PipelineRunRecord, SavedConnectionRecord, StagedArtifactRecord,
+    TableExecutionRecord,
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -234,4 +235,75 @@ pub struct UpsertTableExecutionRequest {
     pub checkpoint_last_chunk_key: Option<String>,
     #[serde(default)]
     pub checkpoint_completed: Option<bool>,
+}
+
+// ── Saved Connections ────────────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct SavedConnectionRequest {
+    pub name: String,
+    pub kind: String,
+    pub host: String,
+    pub port: u16,
+    pub database: String,
+    pub username: String,
+    #[serde(default)]
+    pub secret_ref: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SavedConnectionResponse {
+    pub id: String,
+    pub name: String,
+    pub kind: String,
+    pub host: String,
+    pub port: u16,
+    pub database: String,
+    pub username: String,
+    pub secret_ref: Option<String>,
+    pub created_by: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl TryFrom<SavedConnectionRecord> for SavedConnectionResponse {
+    type Error = anyhow::Error;
+
+    fn try_from(r: SavedConnectionRecord) -> anyhow::Result<Self> {
+        let cfg = &r.config_json;
+        let host = cfg
+            .get("host")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string();
+        let port = cfg.get("port").and_then(|v| v.as_u64()).unwrap_or(5432) as u16;
+        let database = cfg
+            .get("database")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string();
+        let username = cfg
+            .get("username")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string();
+        Ok(Self {
+            id: r.id.to_string(),
+            name: r.name,
+            kind: r.kind,
+            host,
+            port,
+            database,
+            username,
+            secret_ref: r.secret_ref,
+            created_by: r.created_by,
+            created_at: r.created_at.to_rfc3339(),
+            updated_at: r.updated_at.to_rfc3339(),
+        })
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct SavedConnectionsResponse {
+    pub connections: Vec<SavedConnectionResponse>,
 }

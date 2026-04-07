@@ -8,6 +8,7 @@ use crate::{
         ApplySpecRecord, CreatePipelineRunRecord, PipelineRepository, RecordStagedArtifactRecord,
         UpsertTableExecutionRecord,
     },
+    services::ConnectionService,
 };
 use astra_metadata::PipelineStatus;
 use chrono::Utc;
@@ -16,11 +17,18 @@ use uuid::Uuid;
 
 pub struct PipelineService {
     repository: Arc<dyn PipelineRepository>,
+    connection_service: Arc<ConnectionService>,
 }
 
 impl PipelineService {
-    pub fn new(repository: Arc<dyn PipelineRepository>) -> Self {
-        Self { repository }
+    pub fn new(
+        repository: Arc<dyn PipelineRepository>,
+        connection_service: Arc<ConnectionService>,
+    ) -> Self {
+        Self {
+            repository,
+            connection_service,
+        }
     }
 
     pub async fn list_pipelines(&self) -> anyhow::Result<Vec<PipelineSummaryResponse>> {
@@ -37,6 +45,7 @@ impl PipelineService {
             anyhow::bail!(BadRequestError("yaml must not be empty".to_string()));
         }
         let spec = astra_yaml::AstraSpec::parse_yaml(&yaml)?;
+        let spec = self.connection_service.resolve_spec(spec).await?;
         spec.validate()?;
         if spec.requests_cdc() {
             anyhow::bail!(

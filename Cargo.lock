@@ -96,6 +96,8 @@ dependencies = [
  "reqwest",
  "serde_json",
  "tokio",
+ "tracing",
+ "tracing-subscriber",
  "uuid",
 ]
 
@@ -122,6 +124,7 @@ name = "astra-connectors"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "astra-metadata",
  "astra-runtime",
  "astra-yaml",
  "flate2",
@@ -183,6 +186,7 @@ dependencies = [
  "chrono",
  "serde",
  "serde_json",
+ "thiserror 2.0.18",
  "uuid",
 ]
 

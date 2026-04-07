@@ -1,6 +1,9 @@
 use crate::{
     error::NotFoundError,
     repositories::{
+        connection_repository::{
+            ConnectionRepository, CreateSavedConnectionInput, SavedConnectionRecord,
+        },
         AppliedPipelineRecord, ApplySpecRecord, CreatePipelineRunRecord, PipelineRecord,
         PipelineRepository, PipelineRunRecord, RecordStagedArtifactRecord, StagedArtifactRecord,
         TableExecutionRecord, UpsertTableExecutionRecord,
@@ -677,4 +680,138 @@ fn hash_content(content: &str) -> String {
 
 fn parse_pipeline_status(status: String) -> anyhow::Result<PipelineStatus> {
     PipelineStatus::from_str(&status).map_err(|err| anyhow!(err))
+}
+
+#[async_trait]
+impl ConnectionRepository for PostgresPipelineRepository {
+    async fn list_connections(&self) -> anyhow::Result<Vec<SavedConnectionRecord>> {
+        let client = self
+            .pool
+            .get()
+            .await
+            .context("failed to obtain pool connection")?;
+        let rows = client
+            .query(
+                r#"
+                SELECT id, name, kind, config_json, secret_ref, created_by, created_at, updated_at
+                FROM saved_connections
+                ORDER BY name ASC
+                "#,
+                &[],
+            )
+            .await
+            .context("failed to list saved connections")?;
+        rows.into_iter().map(map_connection_row).collect()
+    }
+
+    async fn get_by_name(&self, name: &str) -> anyhow::Result<Option<SavedConnectionRecord>> {
+        let client = self
+            .pool
+            .get()
+            .await
+            .context("failed to obtain pool connection")?;
+        let row = client
+            .query_opt(
+                r#"
+                SELECT id, name, kind, config_json, secret_ref, created_by, created_at, updated_at
+                FROM saved_connections
+                WHERE name = $1
+                "#,
+                &[&name],
+            )
+            .await
+            .context("failed to get saved connection by name")?;
+        row.map(map_connection_row).transpose()
+    }
+
+    async fn create(
+        &self,
+        input: CreateSavedConnectionInput,
+    ) -> anyhow::Result<SavedConnectionRecord> {
+        let client = self
+            .pool
+            .get()
+            .await
+            .context("failed to obtain pool connection")?;
+        let row = client
+            .query_one(
+                r#"
+                INSERT INTO saved_connections (name, kind, config_json, secret_ref, created_by)
+                VALUES ($1, $2, $3, $4, $5)
+                RETURNING id, name, kind, config_json, secret_ref, created_by, created_at, updated_at
+                "#,
+                &[
+                    &input.name,
+                    &input.kind,
+                    &Json(&input.config_json),
+                    &input.secret_ref,
+                    &input.created_by,
+                ],
+            )
+            .await
+            .context("failed to create saved connection")?;
+        map_connection_row(row)
+    }
+
+    async fn update(
+        &self,
+        name: &str,
+        input: CreateSavedConnectionInput,
+    ) -> anyhow::Result<SavedConnectionRecord> {
+        let client = self
+            .pool
+            .get()
+            .await
+            .context("failed to obtain pool connection")?;
+        let row = client
+            .query_opt(
+                r#"
+                UPDATE saved_connections
+                SET kind = $2, config_json = $3, secret_ref = $4, updated_at = NOW()
+                WHERE name = $1
+                RETURNING id, name, kind, config_json, secret_ref, created_by, created_at, updated_at
+                "#,
+                &[
+                    &name,
+                    &input.kind,
+                    &Json(&input.config_json),
+                    &input.secret_ref,
+                ],
+            )
+            .await
+            .context("failed to update saved connection")?;
+        row.map(map_connection_row)
+            .transpose()?
+            .ok_or_else(|| anyhow::anyhow!(NotFoundError(name.to_string())))
+    }
+
+    async fn delete(&self, name: &str) -> anyhow::Result<()> {
+        let client = self
+            .pool
+            .get()
+            .await
+            .context("failed to obtain pool connection")?;
+        let count = client
+            .execute("DELETE FROM saved_connections WHERE name = $1", &[&name])
+            .await
+            .context("failed to delete saved connection")?;
+        if count == 0 {
+            anyhow::bail!(NotFoundError(name.to_string()));
+        }
+        Ok(())
+    }
+}
+
+fn map_connection_row(row: Row) -> anyhow::Result<SavedConnectionRecord> {
+    let Json(config_json) = row.try_get::<_, Json<serde_json::Value>>("config_json")?;
+    Ok(SavedConnectionRecord {
+        id: row.try_get("id")?,
+        name: row.try_get("name")?,
+        kind: row.try_get("kind")?,
+        config_json,
+        secret_ref: row.try_get("secret_ref")?,
+        created_by: row.try_get("created_by")?,
+        created_at: row.try_get("created_at")?,
+        updated_at: row.try_get("updated_at")?,
+    })
 }

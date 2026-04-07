@@ -1,3 +1,4 @@
+pub mod connections;
 pub mod health;
 pub mod pipelines;
 
@@ -62,5 +63,16 @@ pub fn routes() -> Router<AppState> {
         .route(
             "/api/v1/examples/postgres-to-warehouse",
             get(health::example_postgres_to_warehouse),
+        )
+        // Saved connections
+        .route(
+            "/api/v1/connections",
+            get(connections::list_connections).post(connections::create_connection),
+        )
+        .route(
+            "/api/v1/connections/:name",
+            get(connections::get_connection)
+                .put(connections::update_connection)
+                .delete(connections::delete_connection),
         )
 }
