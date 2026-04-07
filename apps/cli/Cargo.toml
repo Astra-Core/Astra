@@ -9,6 +9,8 @@ repository.workspace = true
 anyhow.workspace = true
 clap.workspace = true
 tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
 astra-yaml = { path = "../../crates/astra-yaml" }
 astra-connectors = { path = "../../crates/astra-connectors" }
 astra-runtime = { path = "../../crates/astra-runtime" }

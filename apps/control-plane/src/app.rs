@@ -1,7 +1,10 @@
 use crate::{http, state::AppState};
 use axum::Router;
 use std::path::PathBuf;
-use tower_http::services::{ServeDir, ServeFile};
+use tower_http::{
+    services::{ServeDir, ServeFile},
+    trace::TraceLayer,
+};
 
 pub fn build_router(state: AppState) -> Router {
     let web_dist_dir = web_dist_dir();
@@ -10,6 +13,7 @@ pub fn build_router(state: AppState) -> Router {
     Router::new()
         .merge(http::routes())
         .fallback_service(ServeDir::new(web_dist_dir).not_found_service(ServeFile::new(index_file)))
+        .layer(TraceLayer::new_for_http())
         .with_state(state)
 }
 

@@ -6,6 +6,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [Unreleased]
+
+### Added
+- Structured logging via `tracing` throughout the CLI and control plane — replace `println!` with `tracing::info!`/`debug!` events carrying structured fields (pipeline name, table, row count, path).
+- `ASTRA_LOG` environment variable for log-level control (defaults to `info`); supports standard `tracing` filter syntax (e.g. `ASTRA_LOG=astra=debug`).
+- HTTP request tracing in the control plane via `tower-http` `TraceLayer` — each request emits method, path, status, and latency spans.
+- Logs are written to **stderr**; user-facing data output (e.g. `discover-source` schema listing) remains on stdout.
+
+---
+
 ## [0.1.0] - 2026-04-01
 
 First public release of Astra. One complete vertical slice: Postgres snapshot → local/MinIO staging → Postgres raw destination, with a control plane API and web UI for visibility.
