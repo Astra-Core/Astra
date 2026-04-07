@@ -33,6 +33,7 @@ astra-secrets = { path = "../../crates/astra-secrets" }
 astra-connectors = { path = "../../crates/astra-connectors" }
 astra-runtime = { path = "../../crates/astra-runtime" }
 astra-yaml = { path = "../../crates/astra-yaml" }
+serde_yaml.workspace = true
 
 [dev-dependencies]
 testcontainers = "0.17"

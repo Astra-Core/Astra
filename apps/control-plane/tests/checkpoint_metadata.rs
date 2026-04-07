@@ -3,7 +3,8 @@ use std::sync::Arc;
 use anyhow::Result;
 use astra_control_plane::{
     models::api::{TableExecutionResponse, UpsertTableExecutionRequest},
-    services::PipelineService,
+    repositories::InMemoryConnectionRepository,
+    services::{ConnectionService, PipelineService},
     InMemoryPipelineRepository,
 };
 use astra_metadata::PipelineStatus;
@@ -11,7 +12,9 @@ use astra_metadata::PipelineStatus;
 #[tokio::test]
 async fn table_execution_checkpoint_metadata_round_trips_via_service() -> Result<()> {
     let repository = Arc::new(InMemoryPipelineRepository::default());
-    let service = PipelineService::new(repository);
+    let conn_repo = Arc::new(InMemoryConnectionRepository::default());
+    let connection_service = Arc::new(ConnectionService::new(conn_repo));
+    let service = PipelineService::new(repository, connection_service);
 
     let yaml = r#"
 version: v1alpha1
@@ -129,7 +132,9 @@ runtime:
 #[tokio::test]
 async fn delete_and_disable_pipeline_via_service() -> Result<()> {
     let repository = Arc::new(InMemoryPipelineRepository::default());
-    let service = PipelineService::new(repository);
+    let conn_repo = Arc::new(InMemoryConnectionRepository::default());
+    let connection_service = Arc::new(ConnectionService::new(conn_repo));
+    let service = PipelineService::new(repository, connection_service);
 
     let yaml = r#"
 version: v1alpha1
