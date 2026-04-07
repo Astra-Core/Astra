@@ -1,4 +1,5 @@
 use anyhow::{anyhow, bail, Context};
+use astra_metadata::AstraError;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use tokio_postgres::{types::Type, Client, NoTls};
@@ -465,10 +466,15 @@ async fn connect(config: &PostgresConnectionConfig) -> anyhow::Result<Client> {
         pg_config.password(password);
     }
 
-    let (client, connection) = pg_config
-        .connect(NoTls)
-        .await
-        .context("failed to connect to Postgres source")?;
+    let (client, connection) = pg_config.connect(NoTls).await.map_err(|e| {
+        AstraError::connection_failed_retryable(
+            format!(
+                "failed to connect to Postgres source at {}:{}",
+                config.host, config.port
+            ),
+            e,
+        )
+    })?;
 
     tokio::spawn(async move {
         if let Err(error) = connection.await {
@@ -510,10 +516,18 @@ async fn discover_tables(
                 &[&schema, &table],
             )
             .await
-            .with_context(|| format!("failed to inspect columns for {table_name}"))?;
+            .map_err(|e| {
+                AstraError::query_failed_permanent(
+                    format!("failed to inspect columns for {table_name}"),
+                    e,
+                )
+            })?;
 
         if columns.is_empty() {
-            bail!("table {table_name} was not found in Postgres");
+            return Err(AstraError::NotFound(format!(
+                "table {table_name} was not found in Postgres"
+            ))
+            .into());
         }
 
         let primary_key_rows = client
@@ -530,7 +544,12 @@ async fn discover_tables(
                 &[&schema, &table],
             )
             .await
-            .with_context(|| format!("failed to inspect primary key for {table_name}"))?;
+            .map_err(|e| {
+                AstraError::query_failed_permanent(
+                    format!("failed to inspect primary key for {table_name}"),
+                    e,
+                )
+            })?;
 
         tables.push(SourceTable {
             schema: schema.to_string(),

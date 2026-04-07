@@ -6,6 +6,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [Unreleased]
+
+### Added
+- `AstraError` enum in `astra-metadata` — structured error type with retryable/permanent classification and machine-readable `code()` field (`CONNECTION_FAILED`, `QUERY_FAILED`, `STAGING_FAILED`, `VALIDATION_ERROR`, `NOT_FOUND`, `INTERNAL_ERROR`).
+- `AppError::Astra` variant in the control plane — `AstraError` values propagate directly to HTTP responses with correct status codes (404, 400, 502, 500).
+- HTTP error responses now include `{ "error": "...", "code": "...", "retryable": bool }` instead of just `{ "error": "..." }`.
+- Postgres connector `connect()` maps connection failures to `AstraError::ConnectionFailed { retryable: true }`.
+- Postgres `discover_tables()` maps column/PK query failures to `AstraError::QueryFailed { retryable: false }` and missing tables to `AstraError::NotFound`.
+
+---
+
 ## [0.1.0] - 2026-04-01
 
 First public release of Astra. One complete vertical slice: Postgres snapshot → local/MinIO staging → Postgres raw destination, with a control plane API and web UI for visibility.
