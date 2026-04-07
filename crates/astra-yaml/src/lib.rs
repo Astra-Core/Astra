@@ -47,6 +47,8 @@ pub enum ValidationError {
     MissingPostgresCdcPublicationName,
     #[error("unrecognized secret reference: {0}")]
     InvalidSecretReference(String),
+    #[error("{field} cannot specify both connectionRef and connection")]
+    AmbiguousConnection { field: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -80,6 +82,9 @@ pub enum PipelineMode {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Source {
     pub kind: String,
+    #[serde(default, rename = "connectionRef")]
+    pub connection_ref: Option<String>,
+    #[serde(default)]
     pub connection: BTreeMap<String, serde_yaml::Value>,
     pub capture: Capture,
 }
@@ -116,6 +121,8 @@ pub enum SnapshotMode {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Destination {
     pub kind: String,
+    #[serde(default, rename = "connectionRef")]
+    pub connection_ref: Option<String>,
     #[serde(default)]
     pub connection: Option<BTreeMap<String, serde_yaml::Value>>,
     #[serde(default)]
@@ -241,6 +248,24 @@ impl AstraSpec {
             return Err(ValidationError::InvalidBatchSize);
         }
 
+        if self.source.connection_ref.is_some() && !self.source.connection.is_empty() {
+            return Err(ValidationError::AmbiguousConnection {
+                field: "source".to_string(),
+            });
+        }
+        if self.destination.connection_ref.is_some()
+            && self
+                .destination
+                .connection
+                .as_ref()
+                .map(|c| !c.is_empty())
+                .unwrap_or(false)
+        {
+            return Err(ValidationError::AmbiguousConnection {
+                field: "destination".to_string(),
+            });
+        }
+
         validate_source(self)?;
         validate_destination(self)?;
 
@@ -301,12 +326,14 @@ fn validate_schedule(spec: &AstraSpec) -> Result<(), ValidationError> {
 fn validate_source(spec: &AstraSpec) -> Result<(), ValidationError> {
     match spec.source.kind.as_str() {
         "postgres" => {
-            require_non_empty_fields(
-                &spec.source.connection,
-                "postgres",
-                true,
-                &["host", "port", "database", "username"],
-            )?;
+            if spec.source.connection_ref.is_none() {
+                require_non_empty_fields(
+                    &spec.source.connection,
+                    "postgres",
+                    true,
+                    &["host", "port", "database", "username"],
+                )?;
+            }
             if spec.source.capture.tables.is_empty() {
                 return Err(ValidationError::MissingPostgresTables);
             }
@@ -321,12 +348,14 @@ fn validate_source(spec: &AstraSpec) -> Result<(), ValidationError> {
             }
         }
         "mysql" => {
-            require_non_empty_fields(
-                &spec.source.connection,
-                "mysql",
-                true,
-                &["host", "port", "database", "username"],
-            )?;
+            if spec.source.connection_ref.is_none() {
+                require_non_empty_fields(
+                    &spec.source.connection,
+                    "mysql",
+                    true,
+                    &["host", "port", "database", "username"],
+                )?;
+            }
         }
         _ => {}
     }
@@ -335,7 +364,9 @@ fn validate_source(spec: &AstraSpec) -> Result<(), ValidationError> {
 }
 
 fn validate_destination(spec: &AstraSpec) -> Result<(), ValidationError> {
-    if destination_requires_connection(&spec.destination.kind) {
+    if destination_requires_connection(&spec.destination.kind)
+        && spec.destination.connection_ref.is_none()
+    {
         let Some(connection) = spec.destination.connection.as_ref() else {
             return Err(ValidationError::MissingDestinationConnection(
                 spec.destination.kind.clone(),
