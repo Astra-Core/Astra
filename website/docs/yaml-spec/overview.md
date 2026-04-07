@@ -23,12 +23,13 @@ pipeline:
 
 source:
   kind: postgres
-  connection:
-    host: localhost
-    port: 5432
-    database: mydb
-    username: myuser
-    passwordRef: "env:POSTGRES_PASSWORD"
+  connectionRef: my-prod-db    # reference a saved connection by name (alternative to inline connection)
+  # connection:               # inline connection — omit when connectionRef is set
+  #   host: localhost
+  #   port: 5432
+  #   database: mydb
+  #   username: myuser
+  #   passwordRef: "env:POSTGRES_PASSWORD"
   capture:
     tables:
       - public.users
@@ -89,11 +90,12 @@ Always `v1alpha1`. Future versions will introduce new spec versions with migrati
 | Field | Required | Description |
 |---|---|---|
 | `kind` | Yes | Source connector type. Currently only `postgres`. |
-| `connection.host` | Yes | Database hostname. |
-| `connection.port` | Yes | Database port. |
-| `connection.database` | Yes | Database name. |
-| `connection.username` | Yes | Database username. |
-| `connection.passwordRef` | Yes | Password value. Use `"env:VAR_NAME"` to read from environment, or a plain string for dev. |
+| `connectionRef` | No | Name of a saved connection (see [Saved Connections](#saved-connections)). Mutually exclusive with inline `connection`. |
+| `connection.host` | Yes (if no `connectionRef`) | Database hostname. |
+| `connection.port` | Yes (if no `connectionRef`) | Database port. |
+| `connection.database` | Yes (if no `connectionRef`) | Database name. |
+| `connection.username` | Yes (if no `connectionRef`) | Database username. |
+| `connection.passwordRef` | Yes (if no `connectionRef`) | Password value. Use `"env:VAR_NAME"` to read from environment, or a plain string for dev. |
 | `capture.tables` | Yes | List of `schema.table` pairs to replicate. |
 | `capture.snapshot.mode` | Yes (snapshot/incremental) | `full` — replicate all rows every run. `incremental` — only rows where `cursorField > lastCheckpoint`. |
 | `capture.snapshot.cursorField` | Yes (incremental mode) | Column used as the watermark (e.g., `updated_at`). Must be monotonically increasing. |
@@ -106,11 +108,12 @@ CDC mode (`capture.cdc`) requires `slotName` and `publicationName` but is not ye
 | Field | Required | Description |
 |---|---|---|
 | `kind` | Yes | Destination connector. Currently `postgres` (implemented). `snowflake` and `bigquery` are parsed but not implemented. |
-| `connection.host` | Yes (postgres) | Database hostname. |
-| `connection.port` | Yes (postgres) | Database port. |
-| `connection.database` | Yes (postgres) | Database name. |
-| `connection.username` | Yes (postgres) | Database username. |
-| `connection.passwordRef` | Yes (postgres) | Password — same `env:` syntax as source. |
+| `connectionRef` | No | Name of a saved connection (see [Saved Connections](#saved-connections)). Mutually exclusive with inline `connection`. |
+| `connection.host` | Yes (postgres, if no `connectionRef`) | Database hostname. |
+| `connection.port` | Yes (postgres, if no `connectionRef`) | Database port. |
+| `connection.database` | Yes (postgres, if no `connectionRef`) | Database name. |
+| `connection.username` | Yes (postgres, if no `connectionRef`) | Database username. |
+| `connection.passwordRef` | Yes (postgres, if no `connectionRef`) | Password — same `env:` syntax as source. |
 | `connection.schema` | No | Target schema for raw tables. Defaults to `astra_raw`. |
 | `connection.tablePrefix` | No | Prefix added to each raw table name. Defaults to `raw_`. |
 | `connection.applicationName` | No | Postgres `application_name` for connection tracking. |
@@ -155,6 +158,25 @@ The CLI and control-plane API validate specs before storing or executing them:
 - `staging.kind` must be one of `local`, `s3`, `minio`
 - `write.mode` must be one of `append`, `upsert`, `merge`, `replace`
 - Postgres and Snowflake/BigQuery destinations require a `staging` block
+- Specifying both `connectionRef` and an inline `connection` block on the same source or destination is an error (`AmbiguousConnection`)
+
+## Saved Connections
+
+Instead of inlining credentials in every spec file, you can reference a named saved connection:
+
+```yaml
+source:
+  kind: postgres
+  connectionRef: my-prod-db   # references saved_connections.name
+  capture:
+    tables: [public.users]
+```
+
+Saved connections store non-sensitive fields (`host`, `port`, `database`, `username`) and a single `secret_ref` (e.g. `env:POSTGRES_PASSWORD`) — passwords are never stored in the database. They are managed via the control-plane API (`/api/v1/connections`) and the web UI.
+
+**Rules:**
+- `connectionRef` and an inline `connection` block are mutually exclusive — specifying both is a validation error.
+- The ref is resolved to a concrete connection at apply time by the control plane. The YAML crate only checks syntax; it does not verify that the named connection exists.
 
 ## Examples
 
