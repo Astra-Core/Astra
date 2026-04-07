@@ -166,6 +166,76 @@ List all table-level execution records for a run.
 
 ---
 
+## Saved Connections
+
+Saved connections store non-sensitive database credentials (host, port, database, username) and an optional `secret_ref` so that pipeline specs can reference them by name instead of inlining credentials. Passwords are never stored in the database.
+
+### `GET /api/v1/connections`
+
+List all saved connections.
+
+**Response:**
+
+```json
+{
+  "connections": [
+    {
+      "id": "a1b2c3d4-...",
+      "name": "prod-postgres",
+      "kind": "postgres",
+      "host": "db.example.com",
+      "port": 5432,
+      "database": "app",
+      "username": "replicator",
+      "secret_ref": "env:POSTGRES_PASSWORD",
+      "created_by": null,
+      "created_at": "2026-04-07T10:00:00Z",
+      "updated_at": "2026-04-07T10:00:00Z"
+    }
+  ]
+}
+```
+
+### `POST /api/v1/connections`
+
+Create a new saved connection. Returns `201 Created`.
+
+**Body:**
+
+```json
+{
+  "name": "prod-postgres",
+  "kind": "postgres",
+  "host": "db.example.com",
+  "port": 5432,
+  "database": "app",
+  "username": "replicator",
+  "secret_ref": "env:POSTGRES_PASSWORD"
+}
+```
+
+`secret_ref` is optional. `name` must match `^[a-z0-9][a-z0-9-]{0,61}[a-z0-9]$`.
+
+**Response:** the created connection record (same shape as the list item above).
+
+### `GET /api/v1/connections/:name`
+
+Get a single saved connection by name.
+
+**Response:** the connection record, or `404` if not found.
+
+### `PUT /api/v1/connections/:name`
+
+Replace the fields of an existing saved connection. Same body shape as `POST`. Returns the updated record or `404` if not found.
+
+### `DELETE /api/v1/connections/:name`
+
+Delete a saved connection by name. Returns `204 No Content`, or `404` if not found.
+
+> **Note:** Deleting a saved connection does not affect pipelines that were already applied — `connectionRef` is resolved and inlined at apply time, so existing pipeline specs are unaffected.
+
+---
+
 ## Spec apply
 
 ### `POST /api/v1/specs/apply`
@@ -218,16 +288,19 @@ All errors follow this shape:
 ```json
 {
   "error": "human-readable message",
-  "details": ["optional", "field-level", "errors"]
+  "code": "NOT_FOUND",
+  "retryable": false
 }
 ```
 
-| HTTP status | Meaning |
-|---|---|
-| `400` | Validation error or bad request body |
-| `404` | Resource not found |
-| `409` | Conflict (e.g., duplicate pipeline name) |
-| `500` | Internal server error |
+| HTTP status | `code` | Meaning |
+|---|---|---|
+| `400` | `BAD_REQUEST` / `VALIDATION_ERROR` | Validation error, bad request body, or invalid name format |
+| `404` | `NOT_FOUND` | Resource not found |
+| `502` | `CONNECTION_FAILED` / `QUERY_FAILED` | Upstream connector error |
+| `500` | `INTERNAL_ERROR` | Internal server error |
+
+`retryable: true` is set for transient errors (e.g., connection failures) where the client can safely retry.
 
 ---
 

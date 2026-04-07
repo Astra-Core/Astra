@@ -9,6 +9,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- `ConnectionRepository` trait with Postgres and in-memory implementations — `list_connections`, `get_by_name`, `create`, `update`, `delete`. The Postgres impl is added to `PostgresPipelineRepository` and shares its connection pool; no additional pool is opened.
+- `ConnectionService` — owns CRUD for saved connections and `resolve_spec`, which merges a saved connection's stored fields into a parsed `AstraSpec` before validation. Inline connection fields take precedence over the saved record; `secret_ref` is injected as `password: env:<SECRET_REF>`.
+- `PipelineService::apply_spec` now calls `ConnectionService::resolve_spec` before `spec.validate()`, so specs using `connectionRef` resolve transparently at apply time.
+- REST API for saved connections:
+  - `GET /api/v1/connections` — list all saved connections
+  - `POST /api/v1/connections` — create a connection (201)
+  - `GET /api/v1/connections/:name` — get by name
+  - `PUT /api/v1/connections/:name` — update
+  - `DELETE /api/v1/connections/:name` — delete (204)
+  - Connection `name` is validated against `^[a-z0-9][a-z0-9-]{0,61}[a-z0-9]$`; invalid names return 400.
 - `saved_connections` table added to the Postgres metadata DB via a new `V2__saved_connections` refinery migration. Stores connection name, kind, non-sensitive config JSON, and an optional `secret_ref` — passwords are never persisted in the database.
 - `connectionRef` field on `source` and `destination` in the `v1alpha1` YAML spec — allows referencing a named saved connection instead of inlining credentials. Mutually exclusive with the inline `connection` block; specifying both returns a new `AmbiguousConnection` validation error.
 - `AstraError` enum in `astra-metadata` — structured error type with retryable/permanent classification and machine-readable `code()` field (`CONNECTION_FAILED`, `QUERY_FAILED`, `STAGING_FAILED`, `VALIDATION_ERROR`, `NOT_FOUND`, `INTERNAL_ERROR`).
