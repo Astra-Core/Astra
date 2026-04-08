@@ -91,6 +91,9 @@ python3 scripts/yaml_contract_smoke.py
 | `ASTRA_LOG` | `info` | Log level / filter for CLI and control plane (tracing `EnvFilter` syntax, e.g. `astra=debug`) |
 | `ASTRA_CONTROL_PLANE_ADDR` | `127.0.0.1:8080` | Bind address |
 | `ASTRA_DATABASE_URL` | _(none — in-memory)_ | Postgres metadata DB |
+| `ASTRA_JWT_SECRET` | _(none — auth disabled)_ | JWT signing secret; auth is enabled only when this AND `ASTRA_DATABASE_URL` are both set |
+| `ASTRA_ADMIN_EMAIL` | _(none)_ | Email for the first-run admin user seed (requires `ASTRA_DATABASE_URL`) |
+| `ASTRA_ADMIN_PASSWORD` | _(none)_ | Password for the first-run admin user seed |
 | `ASTRA_S3_ENDPOINT` | — | MinIO/S3 endpoint |
 | `ASTRA_S3_REGION` | `us-east-1` | |
 | `ASTRA_S3_ACCESS_KEY` / `ASTRA_S3_SECRET_KEY` | — | S3 credentials |
