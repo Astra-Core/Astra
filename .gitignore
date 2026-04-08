@@ -9,3 +9,5 @@ website/.docusaurus
 .DS_Store
 minio-data
 postgres-data
+.astra/
+.claude/
