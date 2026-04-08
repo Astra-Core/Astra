@@ -2,10 +2,10 @@ pub mod postgres;
 pub mod postgres_destination;
 
 pub use postgres::{
-    ColumnSchema, DiscoverReport, PostgresCdcSettings, PostgresConnectionConfig,
-    PostgresDiscoverOptions, PostgresSnapshotPlan, PostgresSource, PostgresSourceConfig,
-    SnapshotExecutionOptions, SnapshotExecutionReport, SnapshotTableChunk, SnapshotTableProgress,
-    SourceCatalog, SourceTable,
+    test_postgres_connection, ColumnSchema, ConnectionTestResult, DiscoverReport,
+    PostgresCdcSettings, PostgresConnectionConfig, PostgresDiscoverOptions, PostgresSnapshotPlan,
+    PostgresSource, PostgresSourceConfig, SnapshotExecutionOptions, SnapshotExecutionReport,
+    SnapshotTableChunk, SnapshotTableProgress, SourceCatalog, SourceTable,
 };
 pub use postgres_destination::{
     PostgresDestinationConfig, PostgresDestinationLoader, RawLoadChunkResult, RawLoadReport,

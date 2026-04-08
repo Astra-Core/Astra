@@ -1,9 +1,13 @@
 use crate::{
     error::{AppError, NotFoundError},
-    models::api::{SavedConnectionRequest, SavedConnectionResponse, SavedConnectionsResponse},
+    models::api::{
+        ConnectionTestRequest, ConnectionTestResponse, SavedConnectionRequest,
+        SavedConnectionResponse, SavedConnectionsResponse,
+    },
     repositories::CreateSavedConnectionInput,
     state::AppState,
 };
+use astra_connectors::{test_postgres_connection, PostgresConnectionConfig};
 use axum::{
     extract::{Path, State},
     http::StatusCode,
@@ -99,4 +103,34 @@ pub async fn delete_connection(
 ) -> Result<StatusCode, AppError> {
     state.connection_service.delete_connection(&name).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn test_connection(
+    Json(req): Json<ConnectionTestRequest>,
+) -> Result<Json<ConnectionTestResponse>, AppError> {
+    if req.kind != "postgres" {
+        return Err(AppError::BadRequest(format!(
+            "connection kind '{}' is not supported; only 'postgres' is currently supported",
+            req.kind
+        )));
+    }
+
+    let config = PostgresConnectionConfig {
+        host: req.host,
+        port: req.port,
+        database: req.database,
+        username: req.username,
+        password_ref: req.password_ref,
+        ssl_mode: req.ssl_mode,
+        application_name: None,
+    };
+
+    let result = test_postgres_connection(&config, &req.tables).await;
+
+    Ok(Json(ConnectionTestResponse {
+        status: result.status,
+        latency_ms: result.latency_ms,
+        message: result.message,
+        missing_tables: result.missing_tables,
+    }))
 }

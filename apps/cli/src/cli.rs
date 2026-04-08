@@ -54,6 +54,13 @@ pub enum Command {
         #[arg(long)]
         control_plane_url: Option<String>,
     },
+    /// Test connectivity for the source or destination in an Astra YAML spec
+    TestConnection {
+        file: String,
+        /// Which side to test: "source" or "destination"
+        #[arg(long, default_value = "source")]
+        target: String,
+    },
     /// Run the narrow local snapshot happy path end to end: snapshot -> local staging -> Postgres load
     ExecuteLocalSnapshot {
         file: String,
@@ -75,6 +82,36 @@ pub enum Command {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_test_connection_defaults() {
+        let cli = Cli::parse_from(["astra", "test-connection", "examples/spec.yaml"]);
+        assert_eq!(
+            cli.command,
+            Command::TestConnection {
+                file: "examples/spec.yaml".to_string(),
+                target: "source".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn parses_test_connection_destination_target() {
+        let cli = Cli::parse_from([
+            "astra",
+            "test-connection",
+            "examples/spec.yaml",
+            "--target",
+            "destination",
+        ]);
+        assert_eq!(
+            cli.command,
+            Command::TestConnection {
+                file: "examples/spec.yaml".to_string(),
+                target: "destination".to_string(),
+            }
+        );
+    }
 
     #[test]
     fn parses_snapshot_to_local_staging_flags() {
