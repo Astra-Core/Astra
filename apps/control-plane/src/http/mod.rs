@@ -70,6 +70,10 @@ pub fn routes() -> Router<AppState> {
             get(connections::list_connections).post(connections::create_connection),
         )
         .route(
+            "/api/v1/connections/test",
+            post(connections::test_connection),
+        )
+        .route(
             "/api/v1/connections/:name",
             get(connections::get_connection)
                 .put(connections::update_connection)

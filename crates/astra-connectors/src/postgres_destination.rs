@@ -1,3 +1,4 @@
+use crate::postgres::{test_postgres_connection, ConnectionTestResult, PostgresConnectionConfig};
 use anyhow::{anyhow, bail, Context};
 use flate2::read::GzDecoder;
 use serde::{Deserialize, Serialize};
@@ -79,6 +80,22 @@ impl PostgresDestinationLoader {
 
     pub fn config(&self) -> &PostgresDestinationConfig {
         &self.config
+    }
+
+    /// Test connectivity to this Postgres destination.
+    ///
+    /// Runs `SELECT 1` and reports round-trip latency.
+    pub async fn test_connection(&self) -> ConnectionTestResult {
+        let cfg = PostgresConnectionConfig {
+            host: self.config.host.clone(),
+            port: self.config.port,
+            database: self.config.database.clone(),
+            username: self.config.username.clone(),
+            password_ref: self.config.password_ref.clone(),
+            ssl_mode: self.config.ssl_mode.clone(),
+            application_name: self.config.application_name.clone(),
+        };
+        test_postgres_connection(&cfg, &[]).await
     }
 
     pub async fn load_local_stage_chunks(

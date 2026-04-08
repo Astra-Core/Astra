@@ -9,6 +9,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- `test-connection` CLI command — validates source or destination connectivity before running a pipeline. Runs `SELECT 1` against the configured Postgres database, reports round-trip latency, and verifies that every table in `capture.tables` exists. Usage: `astra test-connection <spec.yaml> [--target source|destination]`.
+- `POST /api/v1/connections/test` API endpoint — accepts inline connection config (host, port, database, username, optional passwordRef/sslMode, optional tables list) and returns `{ "status": "ok", "latency_ms": N }` or `{ "status": "error", "message": "..." }`. Supports an optional `tables` array to verify table existence in `information_schema.tables`. Currently supports `"postgres"` kind only.
+- `ConnectionTestResult` type in `astra-connectors` — structured result shared by the CLI and connector layer; carries status, latency, optional error message, and a list of missing tables.
+- `PostgresSource::test_connection` method — tests the source connection and verifies all configured tables exist.
+- `PostgresDestinationLoader::test_connection` method — tests the destination connection reachability.
 - `ConnectionRepository` trait with Postgres and in-memory implementations — `list_connections`, `get_by_name`, `create`, `update`, `delete`. The Postgres impl is added to `PostgresPipelineRepository` and shares its connection pool; no additional pool is opened.
 - `ConnectionService` — owns CRUD for saved connections and `resolve_spec`, which merges a saved connection's stored fields into a parsed `AstraSpec` before validation. Inline connection fields take precedence over the saved record; `secret_ref` is injected as `password: env:<SECRET_REF>`.
 - `PipelineService::apply_spec` now calls `ConnectionService::resolve_spec` before `spec.validate()`, so specs using `connectionRef` resolve transparently at apply time.

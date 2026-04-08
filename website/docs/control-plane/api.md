@@ -234,6 +234,54 @@ Delete a saved connection by name. Returns `204 No Content`, or `404` if not fou
 
 > **Note:** Deleting a saved connection does not affect pipelines that were already applied — `connectionRef` is resolved and inlined at apply time, so existing pipeline specs are unaffected.
 
+### `POST /api/v1/connections/test`
+
+Test connectivity to a database without creating a saved connection. Returns a structured pass/fail result with round-trip latency. Optionally verifies that specific tables exist.
+
+**Body:**
+
+```json
+{
+  "kind": "postgres",
+  "host": "db.example.com",
+  "port": 5432,
+  "database": "app",
+  "username": "replicator",
+  "passwordRef": "env:POSTGRES_PASSWORD",
+  "tables": ["public.users", "public.orders"]
+}
+```
+
+`passwordRef` and `sslMode` are optional. `tables` is optional — when supplied, the endpoint verifies each table exists in `information_schema.tables`.
+
+**Response (success):**
+
+```json
+{ "status": "ok", "latency_ms": 4 }
+```
+
+**Response (connection failure):**
+
+```json
+{
+  "status": "error",
+  "message": "failed to connect to Postgres source at db.example.com:5432: connection refused"
+}
+```
+
+**Response (missing tables):**
+
+```json
+{
+  "status": "error",
+  "latency_ms": 3,
+  "message": "tables not found: public.missing_table",
+  "missing_tables": ["public.missing_table"]
+}
+```
+
+Currently only `"postgres"` is supported for `kind`. Other values return `400 Bad Request`.
+
 ---
 
 ## Spec apply
