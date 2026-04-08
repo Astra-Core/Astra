@@ -1,5 +1,6 @@
 mod api;
 mod app;
+mod auth;
 mod config;
 mod error;
 mod executor;
@@ -15,12 +16,12 @@ use api::ApiModule;
 use config::ConfigModule;
 use metadata::MetadataModule;
 use repositories::{
-    memory::{InMemoryConnectionRepository, InMemoryPipelineRepository},
+    memory::{InMemoryConnectionRepository, InMemoryPipelineRepository, InMemoryUserRepository},
     postgres::PostgresPipelineRepository,
-    ConnectionRepository, PipelineRepository,
+    ConnectionRepository, PipelineRepository, UserRepository,
 };
 use scheduler::SchedulerModule;
-use services::{ConnectionService, PipelineService};
+use services::{AuthService, ConnectionService, PipelineService};
 use state::AppState;
 use std::{net::SocketAddr, sync::Arc};
 
@@ -37,13 +38,30 @@ async fn main() -> anyhow::Result<()> {
     let api = ApiModule::new();
     let scheduler = SchedulerModule::new();
     let metadata = MetadataModule::new();
-    let (pipeline_repo, connection_repo) = build_repositories(&config).await;
+
+    let (pipeline_repo, connection_repo, user_repo) = build_repositories(&config).await;
+
+    let auth_service = if config.auth_enabled {
+        let secret = config
+            .jwt_secret
+            .as_deref()
+            .unwrap_or_default()
+            .as_bytes()
+            .to_vec();
+        let svc = Arc::new(AuthService::new(user_repo, secret));
+        tracing::info!("auth enabled (JWT + local users)");
+        Some(svc)
+    } else {
+        tracing::info!("auth disabled (ASTRA_JWT_SECRET not set)");
+        None
+    };
+
     let connection_service = Arc::new(ConnectionService::new(connection_repo));
     let pipeline_service = Arc::new(PipelineService::new(
         pipeline_repo,
         connection_service.clone(),
     ));
-    let state = AppState::new(pipeline_service, connection_service);
+    let state = AppState::new(pipeline_service, connection_service, auth_service);
     let app = app::build_router(state);
 
     tracing::info!(
@@ -52,6 +70,7 @@ async fn main() -> anyhow::Result<()> {
         scheduler = scheduler.status(),
         metadata = metadata.status(),
         database_backend = config.database_backend_label(),
+        auth_enabled = config.auth_enabled,
         "astra control-plane modules initialized"
     );
 
@@ -64,13 +83,36 @@ async fn main() -> anyhow::Result<()> {
 
 async fn build_repositories(
     config: &ConfigModule,
-) -> (Arc<dyn PipelineRepository>, Arc<dyn ConnectionRepository>) {
+) -> (
+    Arc<dyn PipelineRepository>,
+    Arc<dyn ConnectionRepository>,
+    Arc<dyn UserRepository>,
+) {
     if let Some(database_url) = config.database_url.as_deref() {
         match PostgresPipelineRepository::connect(database_url).await {
             Ok(repository) => {
                 tracing::info!("using Postgres pipeline repository");
                 let repo = Arc::new(repository);
-                return (repo.clone(), repo);
+
+                // Seed the initial admin user if both env vars are set and users
+                // table is empty.
+                if let (Some(email), Some(password)) = (&config.admin_email, &config.admin_password)
+                {
+                    match auth::hash_password(password) {
+                        Ok(hash) => {
+                            if let Err(e) = repo.maybe_seed_admin(email, &hash).await {
+                                tracing::warn!(?e, "admin seed failed");
+                            }
+                        }
+                        Err(e) => tracing::warn!(?e, "failed to hash admin password for seed"),
+                    }
+                }
+
+                return (
+                    repo.clone() as Arc<dyn PipelineRepository>,
+                    repo.clone() as Arc<dyn ConnectionRepository>,
+                    repo as Arc<dyn UserRepository>,
+                );
             }
             Err(error) => {
                 tracing::warn!(
@@ -86,5 +128,6 @@ async fn build_repositories(
     (
         Arc::new(InMemoryPipelineRepository::default()),
         Arc::new(InMemoryConnectionRepository::default()),
+        Arc::new(InMemoryUserRepository::default()),
     )
 }

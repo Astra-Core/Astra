@@ -9,6 +9,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- Auth DB schema (`V3__auth_schema` migration): `users` table (id, email, password_hash, auth_source, created_at, updated_at) and `refresh_tokens` table (id, user_id FK → users with CASCADE, token_hash UNIQUE, expires_at, revoked_at, created_at). Index `idx_refresh_tokens_user` on `refresh_tokens.user_id`. Closes part of #144.
+- Config additions for auth: `ASTRA_JWT_SECRET` (enables auth when set alongside `ASTRA_DATABASE_URL`), `ASTRA_ADMIN_EMAIL` + `ASTRA_ADMIN_PASSWORD` (first-run admin seed). `ConfigModule.auth_enabled` is `true` only when both the database URL and JWT secret are present.
+- First-run admin seed: on startup, when `users` table is empty and `ASTRA_ADMIN_EMAIL`/`ASTRA_ADMIN_PASSWORD` are set, an admin user is inserted with an Argon2id password hash. Safe on every restart (guarded by `COUNT(*) = 0`). Closes #144.
+- `UserRepository` trait with `find_by_email`, `find_by_id`, `create_user`, `list_users`, `delete_user`, `store_refresh_token`, `find_refresh_token`, `revoke_refresh_token`. `PostgresPipelineRepository` implements it (shared pool, zero extra connections); `InMemoryUserRepository` provides an in-memory fallback.
+- `auth` module (`apps/control-plane/src/auth.rs`): `Claims` struct, `encode_access_token` / `decode_access_token` (HS256, 15-minute TTL), `hash_password` / `verify_password` (Argon2id), `generate_refresh_token` (256-bit CSPRNG hex). Closes #146.
+- `AuthService` (`apps/control-plane/src/services/auth_service.rs`): `login_local` (returns access + refresh token pair), `refresh` (validate refresh token, issue new access token), `logout` (revoke refresh token), `create_user`, `list_users`, `delete_user`. Refresh tokens are stored as SHA-256 hashes; the raw token is only returned to the caller once. Closes #146.
+- `AppState.auth_service: Option<Arc<AuthService>>` — present when auth is enabled; consumed by auth HTTP handlers (#149) and middleware (#148).
 - `ConnectionRepository` trait with Postgres and in-memory implementations — `list_connections`, `get_by_name`, `create`, `update`, `delete`. The Postgres impl is added to `PostgresPipelineRepository` and shares its connection pool; no additional pool is opened.
 - `ConnectionService` — owns CRUD for saved connections and `resolve_spec`, which merges a saved connection's stored fields into a parsed `AstraSpec` before validation. Inline connection fields take precedence over the saved record; `secret_ref` is injected as `password: env:<SECRET_REF>`.
 - `PipelineService::apply_spec` now calls `ConnectionService::resolve_spec` before `spec.validate()`, so specs using `connectionRef` resolve transparently at apply time.

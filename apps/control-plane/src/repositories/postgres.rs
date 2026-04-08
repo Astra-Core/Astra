@@ -4,6 +4,7 @@ use crate::{
         connection_repository::{
             ConnectionRepository, CreateSavedConnectionInput, SavedConnectionRecord,
         },
+        user_repository::{RefreshTokenRecord, UserRecord, UserRepository},
         AppliedPipelineRecord, ApplySpecRecord, CreatePipelineRunRecord, PipelineRecord,
         PipelineRepository, PipelineRunRecord, RecordStagedArtifactRecord, StagedArtifactRecord,
         TableExecutionRecord, UpsertTableExecutionRecord,
@@ -799,6 +800,183 @@ impl ConnectionRepository for PostgresPipelineRepository {
             anyhow::bail!(NotFoundError(name.to_string()));
         }
         Ok(())
+    }
+}
+
+// ── UserRepository ───────────────────────────────────────────────────────────
+
+impl PostgresPipelineRepository {
+    /// Seed an admin user if the `users` table is empty.
+    ///
+    /// Safe to call on every startup: the INSERT is a no-op when a user with
+    /// `admin_email` already exists.
+    pub async fn maybe_seed_admin(
+        &self,
+        admin_email: &str,
+        password_hash: &str,
+    ) -> anyhow::Result<()> {
+        let client = self.pool.get().await.context("pool")?;
+        let row = client
+            .query_one("SELECT COUNT(*) FROM users", &[])
+            .await
+            .context("failed to count users")?;
+        let count: i64 = row.get(0);
+        if count == 0 {
+            client
+                .execute(
+                    "INSERT INTO users (email, password_hash, auth_source) \
+                     VALUES ($1, $2, 'local') ON CONFLICT DO NOTHING",
+                    &[&admin_email, &password_hash],
+                )
+                .await
+                .context("failed to seed admin user")?;
+            tracing::info!(email = %admin_email, "seeded initial admin user");
+        }
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl UserRepository for PostgresPipelineRepository {
+    async fn find_by_email(&self, email: &str) -> anyhow::Result<Option<UserRecord>> {
+        let client = self.pool.get().await.context("pool")?;
+        let row = client
+            .query_opt(
+                "SELECT id, email, password_hash, auth_source, created_at, updated_at \
+                 FROM users WHERE email = $1",
+                &[&email],
+            )
+            .await
+            .context("find_by_email")?;
+        Ok(row.map(map_user_row))
+    }
+
+    async fn find_by_id(&self, id: Uuid) -> anyhow::Result<Option<UserRecord>> {
+        let client = self.pool.get().await.context("pool")?;
+        let row = client
+            .query_opt(
+                "SELECT id, email, password_hash, auth_source, created_at, updated_at \
+                 FROM users WHERE id = $1",
+                &[&id],
+            )
+            .await
+            .context("find_by_id")?;
+        Ok(row.map(map_user_row))
+    }
+
+    async fn create_user(
+        &self,
+        email: &str,
+        password_hash: Option<&str>,
+        auth_source: &str,
+    ) -> anyhow::Result<UserRecord> {
+        let client = self.pool.get().await.context("pool")?;
+        let row = client
+            .query_one(
+                "INSERT INTO users (email, password_hash, auth_source) \
+                 VALUES ($1, $2, $3) \
+                 RETURNING id, email, password_hash, auth_source, created_at, updated_at",
+                &[&email, &password_hash, &auth_source],
+            )
+            .await
+            .context("create_user")?;
+        Ok(map_user_row(row))
+    }
+
+    async fn list_users(&self) -> anyhow::Result<Vec<UserRecord>> {
+        let client = self.pool.get().await.context("pool")?;
+        let rows = client
+            .query(
+                "SELECT id, email, password_hash, auth_source, created_at, updated_at \
+                 FROM users ORDER BY created_at",
+                &[],
+            )
+            .await
+            .context("list_users")?;
+        Ok(rows.into_iter().map(map_user_row).collect())
+    }
+
+    async fn delete_user(&self, id: Uuid) -> anyhow::Result<()> {
+        let client = self.pool.get().await.context("pool")?;
+        let n = client
+            .execute("DELETE FROM users WHERE id = $1", &[&id])
+            .await
+            .context("delete_user")?;
+        if n == 0 {
+            anyhow::bail!("user {id} not found");
+        }
+        Ok(())
+    }
+
+    async fn store_refresh_token(
+        &self,
+        user_id: Uuid,
+        token_hash: &str,
+        expires_at: chrono::DateTime<chrono::Utc>,
+    ) -> anyhow::Result<()> {
+        let client = self.pool.get().await.context("pool")?;
+        client
+            .execute(
+                "INSERT INTO refresh_tokens (user_id, token_hash, expires_at) \
+                 VALUES ($1, $2, $3)",
+                &[&user_id, &token_hash, &expires_at],
+            )
+            .await
+            .context("store_refresh_token")?;
+        Ok(())
+    }
+
+    async fn find_refresh_token(
+        &self,
+        token_hash: &str,
+    ) -> anyhow::Result<Option<RefreshTokenRecord>> {
+        let client = self.pool.get().await.context("pool")?;
+        let row = client
+            .query_opt(
+                "SELECT id, user_id, token_hash, expires_at, revoked_at, created_at \
+                 FROM refresh_tokens WHERE token_hash = $1",
+                &[&token_hash],
+            )
+            .await
+            .context("find_refresh_token")?;
+        Ok(row.map(map_token_row))
+    }
+
+    async fn revoke_refresh_token(&self, token_hash: &str) -> anyhow::Result<()> {
+        let client = self.pool.get().await.context("pool")?;
+        let n = client
+            .execute(
+                "UPDATE refresh_tokens SET revoked_at = NOW() WHERE token_hash = $1",
+                &[&token_hash],
+            )
+            .await
+            .context("revoke_refresh_token")?;
+        if n == 0 {
+            anyhow::bail!("refresh token not found");
+        }
+        Ok(())
+    }
+}
+
+fn map_user_row(row: Row) -> UserRecord {
+    UserRecord {
+        id: row.get("id"),
+        email: row.get("email"),
+        password_hash: row.get("password_hash"),
+        auth_source: row.get("auth_source"),
+        created_at: row.get("created_at"),
+        updated_at: row.get("updated_at"),
+    }
+}
+
+fn map_token_row(row: Row) -> RefreshTokenRecord {
+    RefreshTokenRecord {
+        id: row.get("id"),
+        user_id: row.get("user_id"),
+        token_hash: row.get("token_hash"),
+        expires_at: row.get("expires_at"),
+        revoked_at: row.get("revoked_at"),
+        created_at: row.get("created_at"),
     }
 }
 
