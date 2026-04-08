@@ -1,3 +1,4 @@
+mod config_parser;
 pub mod postgres;
 pub mod postgres_destination;
 
