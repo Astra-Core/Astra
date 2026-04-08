@@ -78,8 +78,22 @@ pub async fn discover_source(file: &str) -> anyhow::Result<()> {
     }
 
     println!("snapshot skeleton:");
-    for table in &report.snapshot_plan.tables {
-        println!("- {} -> {}", table.table, table.sql);
+    // Use spec table names (parsed from YAML before password resolution) to avoid
+    // flowing credential-tainted data into output. SQL is trivially derived from table name.
+    for table in &spec.source.capture.tables {
+        let sql = {
+            let parts: Vec<&str> = table.splitn(2, '.').collect();
+            if parts.len() == 2 {
+                format!(
+                    "SELECT * FROM \"{}\".\"{}\"",
+                    parts[0].replace('"', "\"\""),
+                    parts[1].replace('"', "\"\"")
+                )
+            } else {
+                format!("SELECT * FROM \"{table}\"")
+            }
+        };
+        println!("- {table} -> {sql}");
     }
 
     Ok(())
