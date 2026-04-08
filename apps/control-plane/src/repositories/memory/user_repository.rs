@@ -94,7 +94,7 @@ impl UserRepository for InMemoryUserRepository {
         let mut guard = self.tokens.write().await;
         let record = guard
             .get_mut(token_hash)
-            .with_context(|| format!("refresh token not found"))?;
+            .with_context(|| "refresh token not found".to_string())?;
         record.revoked_at = Some(Utc::now());
         Ok(())
     }
