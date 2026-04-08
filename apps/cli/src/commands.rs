@@ -568,7 +568,7 @@ pub async fn load_local_staging_to_postgres(
     let report = loader.load_local_stage_chunks(chunk_payloads).await?;
     info!(
         schema = %report.schema,
-        destination_host = %format!("{}:{}", loader.config().host, loader.config().port),
+        destination_host = %format!("{}:{}", loader.config().connection.host, loader.config().connection.port),
         staging_root = %root_dir.display(),
         "loaded staged chunks into postgres raw schema"
     );
