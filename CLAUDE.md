@@ -27,6 +27,7 @@ ASTRA_DATABASE_URL=postgres://astra:astra@localhost:5432/astra cargo run -p astr
 ### CLI
 ```bash
 cargo run -p astra -- validate examples/postgres-to-warehouse.astra.yaml
+cargo run -p astra -- test-connection examples/postgres-to-warehouse.astra.yaml --target source
 cargo run -p astra -- discover-source examples/postgres-to-warehouse.astra.yaml
 cargo run -p astra -- snapshot-to-local-staging examples/postgres-to-warehouse.astra.yaml
 cargo run -p astra -- execute-local-snapshot examples/postgres-to-warehouse.astra.yaml

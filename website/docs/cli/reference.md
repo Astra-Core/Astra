@@ -72,6 +72,44 @@ Output includes table names, column names, data types, nullability, and primary 
 
 ---
 
+### `test-connection`
+
+Test connectivity for the source or destination in an Astra YAML spec.
+
+```bash
+cargo run -p astra -- test-connection <spec-file> [--target source|destination]
+```
+
+**Options:**
+
+| Flag | Description |
+|---|---|
+| `--target <TARGET>` | Which side to test: `source` or `destination` (default: `source`). |
+
+**Example:**
+
+```bash
+POSTGRES_PASSWORD=secret \
+  cargo run -p astra -- test-connection my-pipeline.astra.yaml --target source
+# status: ok
+# latency_ms: 4
+```
+
+**What it does:**
+
+- Establishes a connection to the target database and runs `SELECT 1` to measure round-trip latency.
+- For the `source` target, also verifies that every table in `capture.tables` exists in `information_schema.tables`.
+- Exits with code 0 on success, non-zero if the connection fails or any configured table is missing.
+
+**Failure output:**
+
+```
+status: error
+message: failed to connect to Postgres source at db.example.com:5432: connection refused
+```
+
+---
+
 ### `snapshot-to-local-staging`
 
 Run the capture phase: paginate through source tables and write compressed JSONL.gz chunks to a local directory.

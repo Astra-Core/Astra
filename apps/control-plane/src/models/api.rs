@@ -307,3 +307,39 @@ impl TryFrom<SavedConnectionRecord> for SavedConnectionResponse {
 pub struct SavedConnectionsResponse {
     pub connections: Vec<SavedConnectionResponse>,
 }
+
+// ── Connection Test ──────────────────────────────────────────────────────────
+
+/// Request body for `POST /api/v1/connections/test`.
+#[derive(Debug, Deserialize)]
+pub struct ConnectionTestRequest {
+    /// Connector kind; currently only `"postgres"` is supported.
+    pub kind: String,
+    pub host: String,
+    pub port: u16,
+    pub database: String,
+    pub username: String,
+    /// Password reference in `env:VAR_NAME` format.
+    #[serde(default, rename = "passwordRef")]
+    pub password_ref: Option<String>,
+    #[serde(default, rename = "sslMode")]
+    pub ssl_mode: Option<String>,
+    /// Optional list of tables (schema.table) to verify existence of.
+    #[serde(default)]
+    pub tables: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ConnectionTestResponse {
+    /// `"ok"` or `"error"`.
+    pub status: String,
+    /// Round-trip latency in milliseconds; present when `status == "ok"`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub latency_ms: Option<u64>,
+    /// Error description; present when `status == "error"`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    /// Tables from the request that were not found in the database.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub missing_tables: Vec<String>,
+}

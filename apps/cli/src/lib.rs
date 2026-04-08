@@ -22,6 +22,7 @@ async fn dispatch(command: Command) -> anyhow::Result<()> {
         Command::Validate { file } => commands::validate(&file),
         Command::Apply { file } => commands::apply(&file),
         Command::DiscoverSource { file } => commands::discover_source(&file).await,
+        Command::TestConnection { file, target } => commands::test_connection(&file, &target).await,
         Command::SnapshotToLocalStaging {
             file,
             max_rows_per_table,

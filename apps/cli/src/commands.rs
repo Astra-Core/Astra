@@ -85,6 +85,53 @@ pub async fn discover_source(file: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+pub async fn test_connection(file: &str, target: &str) -> anyhow::Result<()> {
+    let spec = AstraSpec::from_file(file)?;
+    spec.validate()?;
+
+    let result = match target {
+        "source" => {
+            if spec.source.kind != "postgres" {
+                bail!(
+                    "test-connection: source kind '{}' is not supported yet",
+                    spec.source.kind
+                );
+            }
+            let source = PostgresSource::from_spec(&spec)?;
+            source.test_connection().await
+        }
+        "destination" => {
+            if spec.destination.kind != "postgres" {
+                bail!(
+                    "test-connection: destination kind '{}' is not supported yet",
+                    spec.destination.kind
+                );
+            }
+            let loader = PostgresDestinationLoader::from_spec(&spec)?;
+            loader.test_connection().await
+        }
+        other => bail!(
+            "unknown target '{}'; expected 'source' or 'destination'",
+            other
+        ),
+    };
+
+    if result.status == "ok" {
+        println!("status: ok\nlatency_ms: {}", result.latency_ms.unwrap_or(0));
+    } else {
+        eprintln!(
+            "status: error\nmessage: {}",
+            result.message.as_deref().unwrap_or("unknown error")
+        );
+        if !result.missing_tables.is_empty() {
+            eprintln!("missing_tables: {}", result.missing_tables.join(", "));
+        }
+        bail!("connection test failed");
+    }
+
+    Ok(())
+}
+
 pub async fn snapshot_to_local_staging(
     file: &str,
     max_rows_per_table: Option<u64>,

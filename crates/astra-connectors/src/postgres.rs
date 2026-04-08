@@ -194,6 +194,14 @@ impl PostgresSource {
         }
     }
 
+    /// Test connectivity to this Postgres source.
+    ///
+    /// Runs `SELECT 1` to measure round-trip latency and verifies that every
+    /// table in the spec exists in `information_schema.tables`.
+    pub async fn test_connection(&self) -> ConnectionTestResult {
+        test_postgres_connection(&self.config.connection, &self.config.tables).await
+    }
+
     pub async fn discover(
         &self,
         options: PostgresDiscoverOptions,
@@ -364,6 +372,100 @@ impl PostgresSource {
             table_progress,
         })
     }
+}
+
+/// Result of a Postgres connection test.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConnectionTestResult {
+    /// `"ok"` or `"error"`.
+    pub status: String,
+    /// Round-trip latency for `SELECT 1`; present when `status == "ok"`.
+    pub latency_ms: Option<u64>,
+    /// Human-readable error description; present when `status == "error"`.
+    pub message: Option<String>,
+    /// Tables that were not found in the database (subset of the tables checked).
+    #[serde(default)]
+    pub missing_tables: Vec<String>,
+}
+
+impl ConnectionTestResult {
+    fn success(latency_ms: u64, missing_tables: Vec<String>) -> Self {
+        if missing_tables.is_empty() {
+            Self {
+                status: "ok".to_string(),
+                latency_ms: Some(latency_ms),
+                message: None,
+                missing_tables: vec![],
+            }
+        } else {
+            Self {
+                status: "error".to_string(),
+                latency_ms: Some(latency_ms),
+                message: Some(format!("tables not found: {}", missing_tables.join(", "))),
+                missing_tables,
+            }
+        }
+    }
+
+    fn failure(message: impl Into<String>) -> Self {
+        Self {
+            status: "error".to_string(),
+            latency_ms: None,
+            message: Some(message.into()),
+            missing_tables: vec![],
+        }
+    }
+}
+
+/// Test connectivity to a Postgres instance.
+///
+/// Connects, runs `SELECT 1` to measure latency, and — when `tables` is
+/// non-empty — verifies each table exists in `information_schema.tables`.
+pub async fn test_postgres_connection(
+    config: &PostgresConnectionConfig,
+    tables: &[String],
+) -> ConnectionTestResult {
+    let start = std::time::Instant::now();
+    let client = match connect(config).await {
+        Ok(c) => c,
+        Err(e) => return ConnectionTestResult::failure(format!("{:#}", e)),
+    };
+
+    if let Err(e) = client.query_one("SELECT 1", &[]).await {
+        return ConnectionTestResult::failure(format!("ping query failed: {e}"));
+    }
+    let latency_ms = start.elapsed().as_millis() as u64;
+
+    if tables.is_empty() {
+        return ConnectionTestResult::success(latency_ms, vec![]);
+    }
+
+    let mut missing = Vec::new();
+    for table in tables {
+        let (schema, name) = match split_table_name(table) {
+            Ok(pair) => pair,
+            Err(_) => {
+                missing.push(table.clone());
+                continue;
+            }
+        };
+        let rows = match client
+            .query(
+                "SELECT 1 FROM information_schema.tables \
+                 WHERE table_schema = $1 AND table_name = $2",
+                &[&schema, &name],
+            )
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => return ConnectionTestResult::failure(format!("table check failed: {e}")),
+        };
+        if rows.is_empty() {
+            missing.push(table.clone());
+        }
+    }
+
+    ConnectionTestResult::success(latency_ms, missing)
 }
 
 fn parse_connection(
