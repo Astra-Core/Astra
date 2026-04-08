@@ -11,9 +11,7 @@ pub(super) async fn load_chunks(
     username: &str,
     password_ref: Option<&str>,
     application_name: Option<&str>,
-    schema: &str,
-    table_prefix: &str,
-    chunks: Vec<(astra_runtime::StageChunk, Vec<u8>)>,
+    request: super::types::LoadChunkRequest,
 ) -> anyhow::Result<RawLoadReport> {
     let mut client = connect_destination(
         host,
@@ -25,12 +23,12 @@ pub(super) async fn load_chunks(
     )
     .await?;
 
-    ensure_metadata_tables(&client, schema).await?;
+    ensure_metadata_tables(&client, &request.schema).await?;
 
     let mut applied_chunks = Vec::new();
-    for (chunk, bytes) in chunks {
-        let table_name = raw_table_name(schema, table_prefix, &chunk.stream_name);
-        let outcome = load_chunk(&mut client, schema, &table_name, &chunk, &bytes).await?;
+    for (chunk, bytes) in request.chunks {
+        let table_name = raw_table_name(&request.schema, &request.table_prefix, &chunk.stream_name);
+        let outcome = load_chunk(&mut client, &request.schema, &table_name, &chunk, &bytes).await?;
         applied_chunks.push(RawLoadChunkResult {
             object_key: chunk.object_key,
             table_name,
@@ -41,7 +39,7 @@ pub(super) async fn load_chunks(
 
     Ok(RawLoadReport {
         destination_kind: "postgres".to_string(),
-        schema: schema.to_string(),
+        schema: request.schema,
         applied_chunks,
     })
 }

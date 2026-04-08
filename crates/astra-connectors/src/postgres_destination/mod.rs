@@ -61,8 +61,19 @@ impl PostgresDestinationLoader {
         chunks: Vec<(astra_runtime::StageChunk, Vec<u8>)>,
     ) -> anyhow::Result<RawLoadReport> {
         let conn = &self.config.connection;
-        let schema = self.config.schema.as_deref().unwrap_or("astra_raw");
-        let table_prefix = self.config.table_prefix.as_deref().unwrap_or("raw_");
+        let request = types::LoadChunkRequest {
+            schema: self
+                .config
+                .schema
+                .clone()
+                .unwrap_or_else(|| "astra_raw".to_string()),
+            table_prefix: self
+                .config
+                .table_prefix
+                .clone()
+                .unwrap_or_else(|| "raw_".to_string()),
+            chunks,
+        };
 
         loader::load_chunks(
             &conn.host,
@@ -71,9 +82,7 @@ impl PostgresDestinationLoader {
             &conn.username,
             conn.password_ref.as_deref(),
             conn.application_name.as_deref(),
-            schema,
-            table_prefix,
-            chunks,
+            request,
         )
         .await
     }

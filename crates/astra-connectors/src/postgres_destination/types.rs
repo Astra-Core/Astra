@@ -33,6 +33,14 @@ pub struct RawLoadReport {
     pub applied_chunks: Vec<RawLoadChunkResult>,
 }
 
+/// Options for a batch load operation.
+#[derive(Debug)]
+pub(super) struct LoadChunkRequest {
+    pub schema: String,
+    pub table_prefix: String,
+    pub chunks: Vec<(astra_runtime::StageChunk, Vec<u8>)>,
+}
+
 /// Internal outcome of processing a single chunk (not exposed publicly).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct LoadChunkOutcome {
