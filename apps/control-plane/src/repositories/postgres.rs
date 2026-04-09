@@ -4,7 +4,7 @@ use crate::{
         connection_repository::{
             ConnectionRepository, CreateSavedConnectionInput, SavedConnectionRecord,
         },
-        user_repository::{RefreshTokenRecord, UserRecord, UserRepository},
+        user_repository::{LdapGroupMapping, RefreshTokenRecord, UserRecord, UserRepository},
         AppliedPipelineRecord, ApplySpecRecord, CreatePipelineRunRecord, PipelineRecord,
         PipelineRepository, PipelineRunRecord, RecordStagedArtifactRecord, StagedArtifactRecord,
         TableExecutionRecord, UpsertTableExecutionRecord,
@@ -987,6 +987,49 @@ impl UserRepository for PostgresPipelineRepository {
             .context("get_ldap_group_mappings")?;
         Ok(rows.into_iter().map(|r| r.get::<_, String>(0)).collect())
     }
+
+    async fn list_ldap_group_mappings(&self) -> anyhow::Result<Vec<LdapGroupMapping>> {
+        let client = self.pool.get().await.context("pool")?;
+        let rows = client
+            .query(
+                "SELECT id, ldap_group, astra_role, created_at \
+                 FROM ldap_group_mappings ORDER BY created_at ASC",
+                &[],
+            )
+            .await
+            .context("list_ldap_group_mappings")?;
+        Ok(rows.into_iter().map(map_ldap_mapping_row).collect())
+    }
+
+    async fn add_ldap_group_mapping(
+        &self,
+        ldap_group: &str,
+        astra_role: &str,
+    ) -> anyhow::Result<LdapGroupMapping> {
+        let client = self.pool.get().await.context("pool")?;
+        let row = client
+            .query_one(
+                "INSERT INTO ldap_group_mappings (ldap_group, astra_role) \
+                 VALUES ($1, $2) \
+                 RETURNING id, ldap_group, astra_role, created_at",
+                &[&ldap_group, &astra_role],
+            )
+            .await
+            .context("add_ldap_group_mapping")?;
+        Ok(map_ldap_mapping_row(row))
+    }
+
+    async fn delete_ldap_group_mapping(&self, id: Uuid) -> anyhow::Result<()> {
+        let client = self.pool.get().await.context("pool")?;
+        let n = client
+            .execute("DELETE FROM ldap_group_mappings WHERE id = $1", &[&id])
+            .await
+            .context("delete_ldap_group_mapping")?;
+        if n == 0 {
+            anyhow::bail!("ldap group mapping {id} not found");
+        }
+        Ok(())
+    }
 }
 
 fn map_user_row(row: Row) -> UserRecord {
@@ -1007,6 +1050,15 @@ fn map_token_row(row: Row) -> RefreshTokenRecord {
         token_hash: row.get("token_hash"),
         expires_at: row.get("expires_at"),
         revoked_at: row.get("revoked_at"),
+        created_at: row.get("created_at"),
+    }
+}
+
+fn map_ldap_mapping_row(row: Row) -> LdapGroupMapping {
+    LdapGroupMapping {
+        id: row.get("id"),
+        ldap_group: row.get("ldap_group"),
+        astra_role: row.get("astra_role"),
         created_at: row.get("created_at"),
     }
 }

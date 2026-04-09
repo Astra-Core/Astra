@@ -11,8 +11,6 @@ use serde_json::json;
 
 /// Extractor that pulls the validated [`Claims`] injected by [`auth_middleware`]
 /// from request extensions. Handlers that need the caller's identity use this.
-// Consumed by HTTP handlers (issue #149); allow until that issue lands.
-#[allow(dead_code)]
 pub struct AuthClaims(pub Claims);
 
 #[async_trait]
@@ -139,6 +137,14 @@ fn route_permission(method: &Method, path: &str) -> (&'static str, &'static str)
             Method::GET => ("users", "read"),
             Method::POST | Method::PUT => ("users", "write"),
             Method::DELETE => ("users", "delete"),
+            _ => ("*", "*"),
+        };
+    }
+
+    if path.starts_with("/api/v1/ldap") {
+        return match *method {
+            Method::GET => ("users", "read"),
+            Method::POST | Method::DELETE => ("users", "write"),
             _ => ("*", "*"),
         };
     }

@@ -16,4 +16,4 @@ pub use pipeline_repository::{
     TableExecutionRecord, UpsertTableExecutionRecord,
 };
 pub use postgres::PostgresPipelineRepository;
-pub use user_repository::{RefreshTokenRecord, UserRecord, UserRepository};
+pub use user_repository::{LdapGroupMapping, RefreshTokenRecord, UserRecord, UserRepository};

@@ -1,7 +1,3 @@
-// AuthService methods are consumed by HTTP handlers (issue #149).
-// Suppress dead_code until that issue lands.
-#![allow(dead_code)]
-
 use crate::{
     auth::{
         decode_access_token, encode_access_token, generate_refresh_token, hash_password,
@@ -174,9 +170,56 @@ impl AuthService {
         Ok((access_token, refresh_token))
     }
 
-    /// Decode and validate a JWT access token. Used by auth middleware (issue #148).
+    /// Decode and validate a JWT access token. Used by auth middleware.
     pub fn decode_token(&self, token: &str) -> anyhow::Result<Claims> {
         decode_access_token(token, &self.jwt_secret)
+    }
+
+    /// Look up a user by ID. Used by the `GET /api/v1/auth/me` handler.
+    pub async fn get_user(&self, id: Uuid) -> anyhow::Result<Option<UserRecord>> {
+        self.user_repo.find_by_id(id).await
+    }
+
+    // ── LDAP group mapping admin ─────────────────────────────────────────────
+
+    pub async fn list_ldap_group_mappings(
+        &self,
+    ) -> anyhow::Result<Vec<crate::repositories::LdapGroupMapping>> {
+        self.user_repo.list_ldap_group_mappings().await
+    }
+
+    pub async fn add_ldap_group_mapping(
+        &self,
+        ldap_group: &str,
+        astra_role: &str,
+    ) -> anyhow::Result<crate::repositories::LdapGroupMapping> {
+        self.user_repo
+            .add_ldap_group_mapping(ldap_group, astra_role)
+            .await
+    }
+
+    pub async fn delete_ldap_group_mapping(&self, id: uuid::Uuid) -> anyhow::Result<()> {
+        self.user_repo.delete_ldap_group_mapping(id).await
+    }
+
+    /// Unified login: routes to local or LDAP based on the user's `auth_source`.
+    ///
+    /// - If the user has `auth_source = "ldap"` or is unknown and LDAP is configured,
+    ///   delegates to `login_ldap`.
+    /// - Otherwise delegates to `login_local`.
+    pub async fn login(&self, email: &str, password: &str) -> anyhow::Result<(String, String)> {
+        let existing = self.user_repo.find_by_email(email).await?;
+        let is_ldap_user = existing
+            .as_ref()
+            .map(|u| u.auth_source == "ldap")
+            .unwrap_or(false);
+        let unknown_with_ldap = existing.is_none() && self.ldap_client.is_some();
+
+        if is_ldap_user || unknown_with_ldap {
+            self.login_ldap(email, password).await
+        } else {
+            self.login_local(email, password).await
+        }
     }
 
     // ── private helpers ──────────────────────────────────────────────────────

@@ -116,6 +116,26 @@ impl AstraEnforcer {
         guard.get_roles_for_user(user_id, None)
     }
 
+    /// Replace all roles for `user_id` with the given `roles` list atomically.
+    pub async fn set_roles_for_user(
+        &self,
+        user_id: &str,
+        roles: Vec<String>,
+    ) -> anyhow::Result<()> {
+        let mut guard = self.0.write().await;
+        guard
+            .delete_roles_for_user(user_id, None)
+            .await
+            .context("failed to clear roles for user")?;
+        for role in &roles {
+            guard
+                .add_role_for_user(user_id, role, None)
+                .await
+                .context("failed to add role for user")?;
+        }
+        Ok(())
+    }
+
     async fn seed_policies(enforcer: &mut Enforcer) -> anyhow::Result<()> {
         let policies: Vec<Vec<String>> = DEFAULT_POLICIES
             .iter()

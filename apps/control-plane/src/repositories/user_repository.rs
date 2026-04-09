@@ -3,6 +3,14 @@ use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
 #[derive(Debug, Clone)]
+pub struct LdapGroupMapping {
+    pub id: Uuid,
+    pub ldap_group: String,
+    pub astra_role: String,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone)]
 pub struct UserRecord {
     pub id: Uuid,
     pub email: String,
@@ -50,4 +58,19 @@ pub trait UserRepository: Send + Sync {
     async fn revoke_refresh_token(&self, token_hash: &str) -> anyhow::Result<()>;
     /// Return the Astra roles mapped to the given LDAP groups.
     async fn get_ldap_group_mappings(&self, ldap_groups: &[String]) -> anyhow::Result<Vec<String>>;
+
+    // ── LDAP group mapping admin ─────────────────────────────────────────────
+
+    /// List all LDAP group → Astra role mappings.
+    async fn list_ldap_group_mappings(&self) -> anyhow::Result<Vec<LdapGroupMapping>>;
+
+    /// Add a new mapping. Returns an error if the `(ldap_group, astra_role)` pair already exists.
+    async fn add_ldap_group_mapping(
+        &self,
+        ldap_group: &str,
+        astra_role: &str,
+    ) -> anyhow::Result<LdapGroupMapping>;
+
+    /// Remove a mapping by its ID.
+    async fn delete_ldap_group_mapping(&self, id: Uuid) -> anyhow::Result<()>;
 }
