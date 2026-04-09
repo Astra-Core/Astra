@@ -1,3 +1,7 @@
+// Most items here are consumed by auth HTTP handlers (issue #149).
+// Suppress dead_code until that issue lands.
+#![allow(dead_code)]
+
 use anyhow::{anyhow, Context};
 use argon2::{
     password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString},

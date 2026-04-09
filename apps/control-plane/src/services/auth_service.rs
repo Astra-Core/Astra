@@ -1,3 +1,7 @@
+// AuthService methods are consumed by HTTP handlers (issue #149).
+// Suppress dead_code until that issue lands.
+#![allow(dead_code)]
+
 use crate::{
     auth::{
         decode_access_token, encode_access_token, generate_refresh_token, hash_password,
