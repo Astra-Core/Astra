@@ -37,6 +37,8 @@ astra-connectors = { path = "../../crates/astra-connectors" }
 astra-runtime = { path = "../../crates/astra-runtime" }
 astra-yaml = { path = "../../crates/astra-yaml" }
 serde_yaml.workspace = true
+casbin = { version = "2.20.0", features = ["runtime-tokio"] }
+sqlx-adapter = { version = "1.8.0", features = ["postgres"] }
 
 [dev-dependencies]
 testcontainers = "0.17"
