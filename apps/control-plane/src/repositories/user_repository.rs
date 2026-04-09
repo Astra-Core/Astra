@@ -32,6 +32,9 @@ pub trait UserRepository: Send + Sync {
         password_hash: Option<&str>,
         auth_source: &str,
     ) -> anyhow::Result<UserRecord>;
+    /// Insert an LDAP user if one does not already exist; return the existing
+    /// record if found. LDAP users have `password_hash = NULL`.
+    async fn upsert_ldap_user(&self, email: &str) -> anyhow::Result<UserRecord>;
     async fn list_users(&self) -> anyhow::Result<Vec<UserRecord>>;
     async fn delete_user(&self, id: Uuid) -> anyhow::Result<()>;
     async fn store_refresh_token(
@@ -45,4 +48,6 @@ pub trait UserRepository: Send + Sync {
         token_hash: &str,
     ) -> anyhow::Result<Option<RefreshTokenRecord>>;
     async fn revoke_refresh_token(&self, token_hash: &str) -> anyhow::Result<()>;
+    /// Return the Astra roles mapped to the given LDAP groups.
+    async fn get_ldap_group_mappings(&self, ldap_groups: &[String]) -> anyhow::Result<Vec<String>>;
 }

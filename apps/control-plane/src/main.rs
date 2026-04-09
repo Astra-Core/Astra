@@ -6,6 +6,7 @@ mod config;
 mod error;
 mod executor;
 mod http;
+mod ldap;
 mod metadata;
 mod models;
 pub mod repositories;
@@ -16,6 +17,7 @@ mod state;
 use api::ApiModule;
 use authz::AstraEnforcer;
 use config::ConfigModule;
+use ldap::LdapClient;
 use metadata::MetadataModule;
 use repositories::{
     memory::{InMemoryConnectionRepository, InMemoryPipelineRepository, InMemoryUserRepository},
@@ -43,6 +45,14 @@ async fn main() -> anyhow::Result<()> {
 
     let (pipeline_repo, connection_repo, user_repo) = build_repositories(&config).await;
 
+    let enforcer = build_enforcer(&config).await;
+
+    let ldap_client = config.ldap.as_ref().map(|ldap_cfg| {
+        let client = Arc::new(LdapClient::new(ldap_cfg.clone()));
+        tracing::info!(url = %ldap_cfg.url, "LDAP authentication enabled");
+        client
+    });
+
     let auth_service = if config.auth_enabled {
         let secret = config
             .jwt_secret
@@ -50,15 +60,18 @@ async fn main() -> anyhow::Result<()> {
             .unwrap_or_default()
             .as_bytes()
             .to_vec();
-        let svc = Arc::new(AuthService::new(user_repo, secret));
+        let svc = Arc::new(AuthService::new(
+            user_repo,
+            secret,
+            ldap_client,
+            enforcer.clone(),
+        ));
         tracing::info!("auth enabled (JWT + local users)");
         Some(svc)
     } else {
         tracing::info!("auth disabled (ASTRA_JWT_SECRET not set)");
         None
     };
-
-    let enforcer = build_enforcer(&config).await;
 
     let connection_service = Arc::new(ConnectionService::new(connection_repo));
     let pipeline_service = Arc::new(PipelineService::new(

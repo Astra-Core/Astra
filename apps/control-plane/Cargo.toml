@@ -39,6 +39,7 @@ astra-yaml = { path = "../../crates/astra-yaml" }
 serde_yaml.workspace = true
 casbin = { version = "2.20.0", features = ["runtime-tokio"] }
 sqlx-adapter = { version = "1.8.0", features = ["postgres"] }
+ldap3 = "0.12"
 
 [dev-dependencies]
 testcontainers = "0.17"
