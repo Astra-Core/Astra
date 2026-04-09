@@ -2,18 +2,38 @@ pub mod connections;
 pub mod health;
 pub mod pipelines;
 
-use crate::state::AppState;
+use crate::{middleware::auth::auth_middleware, state::AppState};
 use axum::{
+    middleware::from_fn_with_state,
     routing::{get, post},
     Router,
 };
 
-pub fn routes() -> Router<AppState> {
+pub fn routes(state: AppState) -> Router<AppState> {
+    let public = public_routes();
+    let protected = protected_routes().layer(from_fn_with_state(state, auth_middleware));
+
+    Router::new().merge(public).merge(protected)
+}
+
+/// Routes that do not require authentication (health checks, auth endpoints).
+///
+/// Auth handler routes (`/api/v1/auth/*`) are registered here by issue #149.
+fn public_routes() -> Router<AppState> {
     Router::new()
         .route("/", get(health::index))
         .route("/health", get(health::health))
         .route("/ready", get(health::ready))
         .route("/version", get(health::version))
+        .route(
+            "/api/v1/examples/postgres-to-warehouse",
+            get(health::example_postgres_to_warehouse),
+        )
+}
+
+/// Routes that require a valid JWT and casbin-enforced permissions.
+fn protected_routes() -> Router<AppState> {
+    Router::new()
         .route("/api/v1/pipelines", get(pipelines::list_pipelines))
         .route(
             "/api/v1/pipelines/:pipeline_name",
@@ -60,11 +80,6 @@ pub fn routes() -> Router<AppState> {
             post(pipelines::upsert_table_execution).get(pipelines::list_table_executions),
         )
         .route("/api/v1/specs/apply", post(pipelines::apply_spec))
-        .route(
-            "/api/v1/examples/postgres-to-warehouse",
-            get(health::example_postgres_to_warehouse),
-        )
-        // Saved connections
         .route(
             "/api/v1/connections",
             get(connections::list_connections).post(connections::create_connection),

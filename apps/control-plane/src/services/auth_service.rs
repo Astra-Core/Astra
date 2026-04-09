@@ -1,11 +1,7 @@
-// AuthService methods are consumed by HTTP handlers (issue #149).
-// Allow dead_code until that issue lands.
-#![allow(dead_code)]
-
 use crate::{
     auth::{
-        encode_access_token, generate_refresh_token, hash_password, verify_password, Claims,
-        ACCESS_TOKEN_TTL_SECS, REFRESH_TOKEN_TTL_DAYS,
+        decode_access_token, encode_access_token, generate_refresh_token, hash_password,
+        verify_password, Claims, ACCESS_TOKEN_TTL_SECS, REFRESH_TOKEN_TTL_DAYS,
     },
     authz::AstraEnforcer,
     ldap::LdapClient,
@@ -174,6 +170,11 @@ impl AuthService {
         Ok((access_token, refresh_token))
     }
 
+    /// Decode and validate a JWT access token. Used by auth middleware (issue #148).
+    pub fn decode_token(&self, token: &str) -> anyhow::Result<Claims> {
+        decode_access_token(token, &self.jwt_secret)
+    }
+
     // ── private helpers ──────────────────────────────────────────────────────
 
     async fn issue_tokens(&self, user: &UserRecord) -> anyhow::Result<(String, String)> {
@@ -207,16 +208,18 @@ fn sha256_hex(input: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::authz::AstraEnforcer;
     use crate::repositories::memory::InMemoryUserRepository;
 
-    fn make_service() -> AuthService {
+    async fn make_service() -> AuthService {
         let repo = Arc::new(InMemoryUserRepository::default());
-        AuthService::new(repo, b"test-secret".to_vec())
+        let enforcer = Arc::new(AstraEnforcer::new_memory().await.unwrap());
+        AuthService::new(repo, b"test-secret".to_vec(), None, enforcer)
     }
 
     #[tokio::test]
     async fn create_and_login_user() {
-        let svc = make_service();
+        let svc = make_service().await;
         svc.create_user("alice@example.com", "s3cr3t")
             .await
             .unwrap();
@@ -230,14 +233,14 @@ mod tests {
 
     #[tokio::test]
     async fn wrong_password_is_rejected() {
-        let svc = make_service();
+        let svc = make_service().await;
         svc.create_user("bob@example.com", "correct").await.unwrap();
         assert!(svc.login_local("bob@example.com", "wrong").await.is_err());
     }
 
     #[tokio::test]
     async fn refresh_issues_new_access_token() {
-        let svc = make_service();
+        let svc = make_service().await;
         svc.create_user("carol@example.com", "pw").await.unwrap();
         let (_, refresh) = svc.login_local("carol@example.com", "pw").await.unwrap();
         let new_access = svc.refresh(&refresh).await.unwrap();
@@ -246,7 +249,7 @@ mod tests {
 
     #[tokio::test]
     async fn logout_revokes_refresh_token() {
-        let svc = make_service();
+        let svc = make_service().await;
         svc.create_user("dave@example.com", "pw").await.unwrap();
         let (_, refresh) = svc.login_local("dave@example.com", "pw").await.unwrap();
         svc.logout(&refresh).await.unwrap();
@@ -255,7 +258,7 @@ mod tests {
 
     #[tokio::test]
     async fn unknown_email_is_rejected() {
-        let svc = make_service();
+        let svc = make_service().await;
         assert!(svc.login_local("nobody@example.com", "pw").await.is_err());
     }
 }
