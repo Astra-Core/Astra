@@ -308,6 +308,90 @@ pub struct SavedConnectionsResponse {
     pub connections: Vec<SavedConnectionResponse>,
 }
 
+// ── Auth ─────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct LoginRequest {
+    pub email: String,
+    pub password: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct LoginResponse {
+    pub access_token: String,
+    pub token_type: String,
+    /// Lifetime of the access token in seconds.
+    pub expires_in: u64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RefreshResponse {
+    pub access_token: String,
+    pub token_type: String,
+    pub expires_in: u64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct MeResponse {
+    pub id: Uuid,
+    pub email: String,
+    pub auth_source: String,
+}
+
+// ── Users ─────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct CreateUserRequest {
+    pub email: String,
+    pub password: String,
+    #[serde(default)]
+    pub roles: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct UserResponse {
+    pub id: Uuid,
+    pub email: String,
+    pub auth_source: String,
+    pub roles: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct UsersResponse {
+    pub users: Vec<UserResponse>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SetRolesRequest {
+    pub roles: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RolesResponse {
+    pub roles: Vec<String>,
+}
+
+// ── LDAP group mappings ───────────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct LdapGroupMappingRequest {
+    pub ldap_group: String,
+    pub astra_role: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct LdapGroupMappingResponse {
+    pub id: Uuid,
+    pub ldap_group: String,
+    pub astra_role: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct LdapGroupMappingsResponse {
+    pub mappings: Vec<LdapGroupMappingResponse>,
+}
+
 // ── Connection Test ──────────────────────────────────────────────────────────
 
 /// Request body for `POST /api/v1/connections/test`.

@@ -1,4 +1,6 @@
-use crate::repositories::user_repository::{RefreshTokenRecord, UserRecord, UserRepository};
+use crate::repositories::user_repository::{
+    LdapGroupMapping, RefreshTokenRecord, UserRecord, UserRepository,
+};
 use anyhow::Context;
 use async_trait::async_trait;
 use chrono::Utc;
@@ -10,8 +12,7 @@ use uuid::Uuid;
 pub struct InMemoryUserRepository {
     users: Arc<RwLock<HashMap<Uuid, UserRecord>>>,
     tokens: Arc<RwLock<HashMap<String, RefreshTokenRecord>>>,
-    /// Maps ldap_group → Vec<astra_role>. Empty by default; populated via admin API (#148).
-    ldap_mappings: Arc<RwLock<HashMap<String, Vec<String>>>>,
+    ldap_mappings: Arc<RwLock<Vec<LdapGroupMapping>>>,
 }
 
 #[async_trait]
@@ -130,12 +131,50 @@ impl UserRepository for InMemoryUserRepository {
 
     async fn get_ldap_group_mappings(&self, ldap_groups: &[String]) -> anyhow::Result<Vec<String>> {
         let guard = self.ldap_mappings.read().await;
-        let mut roles: Vec<String> = ldap_groups
+        let mut roles: Vec<String> = guard
             .iter()
-            .flat_map(|g| guard.get(g).cloned().unwrap_or_default())
+            .filter(|m| ldap_groups.contains(&m.ldap_group))
+            .map(|m| m.astra_role.clone())
             .collect();
         roles.sort();
         roles.dedup();
         Ok(roles)
+    }
+
+    async fn list_ldap_group_mappings(&self) -> anyhow::Result<Vec<LdapGroupMapping>> {
+        let guard = self.ldap_mappings.read().await;
+        Ok(guard.clone())
+    }
+
+    async fn add_ldap_group_mapping(
+        &self,
+        ldap_group: &str,
+        astra_role: &str,
+    ) -> anyhow::Result<LdapGroupMapping> {
+        let mut guard = self.ldap_mappings.write().await;
+        if guard
+            .iter()
+            .any(|m| m.ldap_group == ldap_group && m.astra_role == astra_role)
+        {
+            anyhow::bail!("mapping '{}' → '{}' already exists", ldap_group, astra_role);
+        }
+        let mapping = LdapGroupMapping {
+            id: Uuid::new_v4(),
+            ldap_group: ldap_group.to_string(),
+            astra_role: astra_role.to_string(),
+            created_at: Utc::now(),
+        };
+        guard.push(mapping.clone());
+        Ok(mapping)
+    }
+
+    async fn delete_ldap_group_mapping(&self, id: Uuid) -> anyhow::Result<()> {
+        let mut guard = self.ldap_mappings.write().await;
+        let before = guard.len();
+        guard.retain(|m| m.id != id);
+        if guard.len() == before {
+            anyhow::bail!("ldap group mapping {id} not found");
+        }
+        Ok(())
     }
 }
