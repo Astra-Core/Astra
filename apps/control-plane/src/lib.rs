@@ -6,6 +6,7 @@ pub mod config;
 pub mod error;
 pub mod executor;
 pub mod http;
+pub mod ldap;
 pub mod metadata;
 pub mod models;
 pub mod repositories;

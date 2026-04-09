@@ -883,6 +883,21 @@ impl UserRepository for PostgresPipelineRepository {
         Ok(map_user_row(row))
     }
 
+    async fn upsert_ldap_user(&self, email: &str) -> anyhow::Result<UserRecord> {
+        let client = self.pool.get().await.context("pool")?;
+        let row = client
+            .query_one(
+                "INSERT INTO users (email, auth_source) \
+                 VALUES ($1, 'ldap') \
+                 ON CONFLICT (email) DO UPDATE SET updated_at = NOW() \
+                 RETURNING id, email, password_hash, auth_source, created_at, updated_at",
+                &[&email],
+            )
+            .await
+            .context("upsert_ldap_user")?;
+        Ok(map_user_row(row))
+    }
+
     async fn list_users(&self) -> anyhow::Result<Vec<UserRecord>> {
         let client = self.pool.get().await.context("pool")?;
         let rows = client
@@ -955,6 +970,22 @@ impl UserRepository for PostgresPipelineRepository {
             anyhow::bail!("refresh token not found");
         }
         Ok(())
+    }
+
+    async fn get_ldap_group_mappings(&self, ldap_groups: &[String]) -> anyhow::Result<Vec<String>> {
+        if ldap_groups.is_empty() {
+            return Ok(vec![]);
+        }
+        let client = self.pool.get().await.context("pool")?;
+        let rows = client
+            .query(
+                "SELECT DISTINCT astra_role FROM ldap_group_mappings \
+                 WHERE ldap_group = ANY($1)",
+                &[&ldap_groups],
+            )
+            .await
+            .context("get_ldap_group_mappings")?;
+        Ok(rows.into_iter().map(|r| r.get::<_, String>(0)).collect())
     }
 }
 

@@ -7,6 +7,8 @@ use crate::{
         encode_access_token, generate_refresh_token, hash_password, verify_password, Claims,
         ACCESS_TOKEN_TTL_SECS, REFRESH_TOKEN_TTL_DAYS,
     },
+    authz::AstraEnforcer,
+    ldap::LdapClient,
     repositories::{UserRecord, UserRepository},
 };
 use anyhow::bail;
@@ -18,13 +20,23 @@ use uuid::Uuid;
 pub struct AuthService {
     user_repo: Arc<dyn UserRepository>,
     jwt_secret: Vec<u8>,
+    /// Present when `ASTRA_LDAP_URL` is configured.
+    ldap_client: Option<Arc<LdapClient>>,
+    enforcer: Arc<AstraEnforcer>,
 }
 
 impl AuthService {
-    pub fn new(user_repo: Arc<dyn UserRepository>, jwt_secret: Vec<u8>) -> Self {
+    pub fn new(
+        user_repo: Arc<dyn UserRepository>,
+        jwt_secret: Vec<u8>,
+        ldap_client: Option<Arc<LdapClient>>,
+        enforcer: Arc<AstraEnforcer>,
+    ) -> Self {
         Self {
             user_repo,
             jwt_secret,
+            ldap_client,
+            enforcer,
         }
     }
 
@@ -116,6 +128,50 @@ impl AuthService {
 
     pub async fn delete_user(&self, id: Uuid) -> anyhow::Result<()> {
         self.user_repo.delete_user(id).await
+    }
+
+    /// Authenticate via LDAP, sync group→role mappings, and issue tokens.
+    ///
+    /// Requires `ASTRA_LDAP_URL` to be configured; returns an error otherwise.
+    ///
+    /// Steps:
+    /// 1. Authenticate `email`/`password` against the directory.
+    /// 2. Resolve LDAP groups → Astra roles via `ldap_group_mappings`.
+    /// 3. Upsert the user in the `users` table (`auth_source = 'ldap'`).
+    /// 4. Re-assign casbin roles so they stay in sync with the directory.
+    /// 5. Issue access + refresh tokens.
+    pub async fn login_ldap(
+        &self,
+        email: &str,
+        password: &str,
+    ) -> anyhow::Result<(String, String)> {
+        let ldap = self
+            .ldap_client
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("LDAP is not configured"))?;
+
+        // 1. Authenticate against the directory.
+        let ldap_user = ldap.authenticate(email, password).await?;
+
+        // 2. Resolve group → role mappings.
+        let roles = self
+            .user_repo
+            .get_ldap_group_mappings(&ldap_user.groups)
+            .await?;
+
+        // 3. Upsert user record.
+        let user = self.user_repo.upsert_ldap_user(email).await?;
+
+        // 4. Sync casbin roles (applied fresh on every login).
+        for role in &roles {
+            self.enforcer
+                .add_role_for_user(&user.id.to_string(), role)
+                .await?;
+        }
+
+        // 5. Issue tokens.
+        let (access_token, refresh_token) = self.issue_tokens(&user).await?;
+        Ok((access_token, refresh_token))
     }
 
     // ── private helpers ──────────────────────────────────────────────────────

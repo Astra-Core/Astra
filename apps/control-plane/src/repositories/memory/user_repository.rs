@@ -10,6 +10,8 @@ use uuid::Uuid;
 pub struct InMemoryUserRepository {
     users: Arc<RwLock<HashMap<Uuid, UserRecord>>>,
     tokens: Arc<RwLock<HashMap<String, RefreshTokenRecord>>>,
+    /// Maps ldap_group → Vec<astra_role>. Empty by default; populated via admin API (#148).
+    ldap_mappings: Arc<RwLock<HashMap<String, Vec<String>>>>,
 }
 
 #[async_trait]
@@ -40,6 +42,33 @@ impl UserRepository for InMemoryUserRepository {
             email: email.to_string(),
             password_hash: password_hash.map(str::to_string),
             auth_source: auth_source.to_string(),
+            created_at: now,
+            updated_at: now,
+        };
+        guard.insert(record.id, record.clone());
+        Ok(record)
+    }
+
+    async fn upsert_ldap_user(&self, email: &str) -> anyhow::Result<UserRecord> {
+        // Return existing record if found.
+        if let Some(user) = self
+            .users
+            .read()
+            .await
+            .values()
+            .find(|u| u.email == email)
+            .cloned()
+        {
+            return Ok(user);
+        }
+        // Create a new LDAP user.
+        let mut guard = self.users.write().await;
+        let now = Utc::now();
+        let record = UserRecord {
+            id: Uuid::new_v4(),
+            email: email.to_string(),
+            password_hash: None,
+            auth_source: "ldap".to_string(),
             created_at: now,
             updated_at: now,
         };
@@ -97,5 +126,16 @@ impl UserRepository for InMemoryUserRepository {
             .with_context(|| "refresh token not found".to_string())?;
         record.revoked_at = Some(Utc::now());
         Ok(())
+    }
+
+    async fn get_ldap_group_mappings(&self, ldap_groups: &[String]) -> anyhow::Result<Vec<String>> {
+        let guard = self.ldap_mappings.read().await;
+        let mut roles: Vec<String> = ldap_groups
+            .iter()
+            .flat_map(|g| guard.get(g).cloned().unwrap_or_default())
+            .collect();
+        roles.sort();
+        roles.dedup();
+        Ok(roles)
     }
 }
