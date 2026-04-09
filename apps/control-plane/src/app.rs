@@ -11,7 +11,7 @@ pub fn build_router(state: AppState) -> Router {
     let index_file = web_dist_dir.join("index.html");
 
     Router::new()
-        .merge(http::routes())
+        .merge(http::routes(state.clone()))
         .fallback_service(ServeDir::new(web_dist_dir).not_found_service(ServeFile::new(index_file)))
         .layer(TraceLayer::new_for_http())
         .with_state(state)

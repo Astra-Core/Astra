@@ -1,5 +1,5 @@
-// Auth primitives are public API consumed by HTTP handlers (issue #149) and
-// Axum middleware (issue #148). Allow dead_code until those issues land.
+// Most items here are consumed by auth HTTP handlers (issue #149).
+// Suppress dead_code until that issue lands.
 #![allow(dead_code)]
 
 use anyhow::{anyhow, Context};
@@ -27,6 +27,18 @@ pub struct Claims {
     pub exp: i64,
     /// Issued-at (Unix timestamp).
     pub iat: i64,
+}
+
+impl Claims {
+    /// Synthetic admin claims injected when auth is disabled (dev / in-memory mode).
+    pub fn dev_admin() -> Self {
+        Self {
+            sub: Uuid::nil(),
+            email: "dev@astra.local".to_string(),
+            exp: i64::MAX,
+            iat: 0,
+        }
+    }
 }
 
 /// Sign a new access token with HS256.

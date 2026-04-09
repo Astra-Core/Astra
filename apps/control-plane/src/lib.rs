@@ -8,6 +8,7 @@ pub mod executor;
 pub mod http;
 pub mod ldap;
 pub mod metadata;
+pub mod middleware;
 pub mod models;
 pub mod repositories;
 pub mod scheduler;
