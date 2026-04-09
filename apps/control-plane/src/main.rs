@@ -1,6 +1,7 @@
 mod api;
 mod app;
 mod auth;
+mod authz;
 mod config;
 mod error;
 mod executor;
@@ -13,6 +14,7 @@ mod services;
 mod state;
 
 use api::ApiModule;
+use authz::AstraEnforcer;
 use config::ConfigModule;
 use metadata::MetadataModule;
 use repositories::{
@@ -56,12 +58,14 @@ async fn main() -> anyhow::Result<()> {
         None
     };
 
+    let enforcer = build_enforcer(&config).await;
+
     let connection_service = Arc::new(ConnectionService::new(connection_repo));
     let pipeline_service = Arc::new(PipelineService::new(
         pipeline_repo,
         connection_service.clone(),
     ));
-    let state = AppState::new(pipeline_service, connection_service, auth_service);
+    let state = AppState::new(pipeline_service, connection_service, auth_service, enforcer);
     let app = app::build_router(state);
 
     tracing::info!(
@@ -79,6 +83,29 @@ async fn main() -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app).await?;
     Ok(())
+}
+
+async fn build_enforcer(config: &ConfigModule) -> Arc<AstraEnforcer> {
+    if let Some(db_url) = config.database_url.as_deref() {
+        match AstraEnforcer::new(db_url).await {
+            Ok(enforcer) => {
+                tracing::info!("casbin enforcer initialized (postgres-backed)");
+                return Arc::new(enforcer);
+            }
+            Err(e) => {
+                tracing::warn!(
+                    ?e,
+                    "failed to initialize postgres casbin enforcer, falling back to in-memory"
+                );
+            }
+        }
+    }
+
+    let enforcer = AstraEnforcer::new_memory()
+        .await
+        .expect("failed to create in-memory casbin enforcer");
+    tracing::info!("casbin enforcer initialized (memory-backed)");
+    Arc::new(enforcer)
 }
 
 async fn build_repositories(

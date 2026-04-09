@@ -1,3 +1,4 @@
+use crate::authz::AstraEnforcer;
 use crate::services::{AuthService, ConnectionService, PipelineService};
 use std::sync::Arc;
 
@@ -9,6 +10,11 @@ pub struct AppState {
     /// Consumed by auth HTTP handlers (issue #149) and Axum middleware (issue #148).
     #[allow(dead_code)]
     pub auth_service: Option<Arc<AuthService>>,
+    /// Casbin RBAC enforcer. Always present — Postgres-backed when a database URL
+    /// is configured, otherwise backed by an in-memory adapter.
+    /// Consumed by authorization middleware (issue #148).
+    #[allow(dead_code)]
+    pub enforcer: Arc<AstraEnforcer>,
 }
 
 impl AppState {
@@ -16,11 +22,13 @@ impl AppState {
         pipeline_service: Arc<PipelineService>,
         connection_service: Arc<ConnectionService>,
         auth_service: Option<Arc<AuthService>>,
+        enforcer: Arc<AstraEnforcer>,
     ) -> Self {
         Self {
             pipeline_service,
             connection_service,
             auth_service,
+            enforcer,
         }
     }
 }
