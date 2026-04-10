@@ -1,5 +1,11 @@
 export type ViewKey = 'overview' | 'onboarding' | 'jobs' | 'yaml';
 
+export interface MeResponse {
+  id: string;
+  email: string;
+  auth_source: 'local' | 'ldap';
+}
+
 export type Pipeline = {
   name: string;
   source_kind: string;

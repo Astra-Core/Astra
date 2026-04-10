@@ -1,5 +1,8 @@
 import { useState } from 'react';
 import type { ViewKey } from '@/types';
+import { AuthProvider, useAuth } from '@/contexts/AuthContext';
+import { LoginPage } from '@/components/LoginPage';
+import { UserMenu } from '@/components/UserMenu';
 import { Overview } from '@/components/Overview';
 import { OnboardingWizard } from '@/components/OnboardingWizard';
 import { PipelineList } from '@/components/PipelineList';
@@ -14,9 +17,22 @@ const NAV_ITEMS: Array<{ key: ViewKey; label: string; eyebrow: string }> = [
   { key: 'yaml', label: 'YAML studio', eyebrow: 'Declarative workflows' },
 ];
 
-export function App() {
+function AppShell() {
+  const { user, isLoading } = useAuth();
   const [activeView, setActiveView] = useState<ViewKey>('overview');
   const [refreshToken, setRefreshToken] = useState(0);
+
+  if (isLoading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background text-muted-foreground text-sm">
+        Loading…
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <LoginPage />;
+  }
 
   function handlePipelineApplied() {
     setRefreshToken((n) => n + 1);
@@ -34,7 +50,7 @@ export function App() {
           </p>
         </div>
 
-        <nav className="flex flex-col gap-1">
+        <nav className="flex flex-col gap-1 flex-1">
           {NAV_ITEMS.map((item) => (
             <Button
               key={item.key}
@@ -47,6 +63,8 @@ export function App() {
             </Button>
           ))}
         </nav>
+
+        <UserMenu />
       </aside>
 
       {/* Main content */}
@@ -72,5 +90,13 @@ export function App() {
         {activeView === 'yaml' && <YamlStudio />}
       </main>
     </div>
+  );
+}
+
+export function App() {
+  return (
+    <AuthProvider>
+      <AppShell />
+    </AuthProvider>
   );
 }
