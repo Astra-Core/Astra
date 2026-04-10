@@ -3,6 +3,7 @@ import type { ViewKey } from '@/types';
 import { Overview } from '@/components/Overview';
 import { OnboardingWizard } from '@/components/OnboardingWizard';
 import { PipelineList } from '@/components/PipelineList';
+import { ConnectionList } from '@/components/ConnectionList';
 import { YamlStudio } from '@/components/YamlStudio';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -11,6 +12,7 @@ const NAV_ITEMS: Array<{ key: ViewKey; label: string; eyebrow: string }> = [
   { key: 'overview', label: 'Overview', eyebrow: 'Control plane' },
   { key: 'onboarding', label: 'Onboarding', eyebrow: 'Source → destination' },
   { key: 'jobs', label: 'Job status', eyebrow: 'Operators' },
+  { key: 'connections', label: 'Connections', eyebrow: 'Infrastructure' },
   { key: 'yaml', label: 'YAML studio', eyebrow: 'Declarative workflows' },
 ];
 
@@ -69,6 +71,7 @@ export function App() {
         {activeView === 'overview' && <Overview />}
         {activeView === 'onboarding' && <OnboardingWizard onApplied={handlePipelineApplied} />}
         {activeView === 'jobs' && <PipelineList refreshToken={refreshToken} />}
+        {activeView === 'connections' && <ConnectionList />}
         {activeView === 'yaml' && <YamlStudio />}
       </main>
     </div>

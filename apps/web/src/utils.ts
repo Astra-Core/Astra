@@ -72,6 +72,26 @@ export function generateWizardYaml(w: WizardState): string {
     snapshotBlock = `    snapshot:\n${lines.join('\n')}\n`;
   }
 
+  const sourceConn =
+    w.source.useSavedConnection && w.source.connectionRef
+      ? `  connectionRef: ${yamlQuote(w.source.connectionRef)}`
+      : `  connection:
+    host: ${yamlQuote(w.source.host)}
+    port: ${w.source.port}
+    database: ${yamlQuote(w.source.database)}
+    username: ${yamlQuote(w.source.username)}
+    passwordRef: env:${w.source.passwordRef}`;
+
+  const destConn =
+    w.destination.useSavedConnection && w.destination.connectionRef
+      ? `  connectionRef: ${yamlQuote(w.destination.connectionRef)}`
+      : `  connection:
+    host: ${yamlQuote(w.destination.host)}
+    port: ${w.destination.port}
+    database: ${yamlQuote(w.destination.database)}
+    username: ${yamlQuote(w.destination.username)}
+    passwordRef: env:${w.destination.passwordRef}`;
+
   return `version: v1alpha1
 pipeline:
   name: ${yamlQuote(pipelineName)}
@@ -79,23 +99,13 @@ pipeline:
   schedule: manual
 source:
   kind: postgres
-  connection:
-    host: ${yamlQuote(w.source.host)}
-    port: ${w.source.port}
-    database: ${yamlQuote(w.source.database)}
-    username: ${yamlQuote(w.source.username)}
-    passwordRef: env:${w.source.passwordRef}
+${sourceConn}
   capture:
     tables:
 ${tableLines}
 ${snapshotBlock}destination:
   kind: postgres
-  connection:
-    host: ${yamlQuote(w.destination.host)}
-    port: ${w.destination.port}
-    database: ${yamlQuote(w.destination.database)}
-    username: ${yamlQuote(w.destination.username)}
-    passwordRef: env:${w.destination.passwordRef}
+${destConn}
   staging:
     kind: local
     bucket: astra-staging

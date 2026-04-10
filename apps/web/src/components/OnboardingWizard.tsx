@@ -1,6 +1,6 @@
-import { useState } from 'react';
-import type { SnapshotMode, WizardState, WizardStep } from '@/types';
-import { applySpec } from '@/api';
+import { useEffect, useState } from 'react';
+import type { SavedConnectionResponse, SnapshotMode, WizardState, WizardStep } from '@/types';
+import { applySpec, fetchConnections } from '@/api';
 import { generateWizardYaml } from '@/utils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -24,6 +24,8 @@ const DEFAULT_WIZARD: WizardState = {
     username: '',
     passwordRef: 'POSTGRES_PASSWORD',
     tables: 'public.users',
+    useSavedConnection: false,
+    connectionRef: '',
   },
   destination: {
     host: 'localhost',
@@ -31,6 +33,8 @@ const DEFAULT_WIZARD: WizardState = {
     database: '',
     username: '',
     passwordRef: 'DEST_POSTGRES_PASSWORD',
+    useSavedConnection: false,
+    connectionRef: '',
   },
   applyStatus: '',
   applying: false,
@@ -47,6 +51,13 @@ type Props = { onApplied: () => void };
 
 export function OnboardingWizard({ onApplied }: Props) {
   const [wizard, setWizard] = useState<WizardState>(DEFAULT_WIZARD);
+  const [savedConnections, setSavedConnections] = useState<SavedConnectionResponse[]>([]);
+
+  useEffect(() => {
+    fetchConnections()
+      .then(setSavedConnections)
+      .catch(() => {/* silently ignore — saved connections are optional */});
+  }, []);
 
   function setStep(step: WizardStep) {
     setWizard((prev) => ({ ...prev, step }));
@@ -166,6 +177,64 @@ export function OnboardingWizard({ onApplied }: Props) {
                 Connection details for the database you want to replicate from.
               </p>
             </div>
+
+            {/* Saved-connection toggle */}
+            {savedConnections.length > 0 && (
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={wizard.source.useSavedConnection}
+                  onClick={() =>
+                    setWizard((prev) => ({
+                      ...prev,
+                      source: {
+                        ...prev.source,
+                        useSavedConnection: !prev.source.useSavedConnection,
+                        connectionRef: '',
+                      },
+                    }))
+                  }
+                  className={[
+                    'relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors',
+                    wizard.source.useSavedConnection ? 'bg-primary' : 'bg-muted',
+                  ].join(' ')}
+                >
+                  <span
+                    className={[
+                      'pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow-sm transition-transform',
+                      wizard.source.useSavedConnection ? 'translate-x-4' : 'translate-x-0',
+                    ].join(' ')}
+                  />
+                </button>
+                <Label className="cursor-pointer select-none">Use saved connection</Label>
+              </div>
+            )}
+
+            {wizard.source.useSavedConnection ? (
+              <div className="space-y-2">
+                <Label htmlFor="wz-src-ref">Saved connection</Label>
+                <select
+                  id="wz-src-ref"
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                  value={wizard.source.connectionRef}
+                  onChange={(e) =>
+                    setWizard((prev) => ({
+                      ...prev,
+                      source: { ...prev.source, connectionRef: e.target.value },
+                    }))
+                  }
+                >
+                  <option value="">— select a connection —</option>
+                  {savedConnections.map((c) => (
+                    <option key={c.name} value={c.name}>
+                      {c.name} ({c.host}:{c.port}/{c.database})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : (
+              <>
             <div className="grid grid-cols-[1fr_7rem] gap-3">
               <div className="space-y-2">
                 <Label htmlFor="wz-src-host">Host</Label>
@@ -222,6 +291,8 @@ export function OnboardingWizard({ onApplied }: Props) {
                 />
               </div>
             </div>
+              </>
+            )}
             <div className="space-y-2">
               <Label htmlFor="wz-src-tables">Tables to replicate</Label>
               <p className="text-xs text-muted-foreground">
@@ -288,10 +359,12 @@ export function OnboardingWizard({ onApplied }: Props) {
               </Button>
               <Button
                 disabled={
-                  !wizard.source.host.trim() ||
-                  !wizard.source.database.trim() ||
-                  !wizard.source.username.trim() ||
                   !wizard.source.tables.trim() ||
+                  (wizard.source.useSavedConnection
+                    ? !wizard.source.connectionRef
+                    : !wizard.source.host.trim() ||
+                      !wizard.source.database.trim() ||
+                      !wizard.source.username.trim()) ||
                   (wizard.snapshot.mode === 'incremental' && !wizard.snapshot.cursorField.trim())
                 }
                 onClick={() => setStep(3)}
@@ -312,6 +385,64 @@ export function OnboardingWizard({ onApplied }: Props) {
                 <code className="font-mono">astra_raw</code> schema.
               </p>
             </div>
+
+            {/* Saved-connection toggle */}
+            {savedConnections.length > 0 && (
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={wizard.destination.useSavedConnection}
+                  onClick={() =>
+                    setWizard((prev) => ({
+                      ...prev,
+                      destination: {
+                        ...prev.destination,
+                        useSavedConnection: !prev.destination.useSavedConnection,
+                        connectionRef: '',
+                      },
+                    }))
+                  }
+                  className={[
+                    'relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors',
+                    wizard.destination.useSavedConnection ? 'bg-primary' : 'bg-muted',
+                  ].join(' ')}
+                >
+                  <span
+                    className={[
+                      'pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow-sm transition-transform',
+                      wizard.destination.useSavedConnection ? 'translate-x-4' : 'translate-x-0',
+                    ].join(' ')}
+                  />
+                </button>
+                <Label className="cursor-pointer select-none">Use saved connection</Label>
+              </div>
+            )}
+
+            {wizard.destination.useSavedConnection ? (
+              <div className="space-y-2">
+                <Label htmlFor="wz-dst-ref">Saved connection</Label>
+                <select
+                  id="wz-dst-ref"
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                  value={wizard.destination.connectionRef}
+                  onChange={(e) =>
+                    setWizard((prev) => ({
+                      ...prev,
+                      destination: { ...prev.destination, connectionRef: e.target.value },
+                    }))
+                  }
+                >
+                  <option value="">— select a connection —</option>
+                  {savedConnections.map((c) => (
+                    <option key={c.name} value={c.name}>
+                      {c.name} ({c.host}:{c.port}/{c.database})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : (
+              <>
             <div className="grid grid-cols-[1fr_7rem] gap-3">
               <div className="space-y-2">
                 <Label htmlFor="wz-dst-host">Host</Label>
@@ -375,15 +506,19 @@ export function OnboardingWizard({ onApplied }: Props) {
                 />
               </div>
             </div>
+              </>
+            )}
             <div className="flex justify-between">
               <Button variant="outline" onClick={() => setStep(2)}>
                 ← Back
               </Button>
               <Button
                 disabled={
-                  !wizard.destination.host.trim() ||
-                  !wizard.destination.database.trim() ||
-                  !wizard.destination.username.trim()
+                  wizard.destination.useSavedConnection
+                    ? !wizard.destination.connectionRef
+                    : !wizard.destination.host.trim() ||
+                      !wizard.destination.database.trim() ||
+                      !wizard.destination.username.trim()
                 }
                 onClick={() => setStep(4)}
               >

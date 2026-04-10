@@ -1,4 +1,4 @@
-export type ViewKey = 'overview' | 'onboarding' | 'jobs' | 'yaml';
+export type ViewKey = 'overview' | 'onboarding' | 'jobs' | 'yaml' | 'connections';
 
 export type Pipeline = {
   name: string;
@@ -84,6 +84,8 @@ export type WizardSource = {
   username: string;
   passwordRef: string;
   tables: string;
+  useSavedConnection: boolean;
+  connectionRef: string;
 };
 
 export type WizardDestination = {
@@ -92,7 +94,39 @@ export type WizardDestination = {
   database: string;
   username: string;
   passwordRef: string;
+  useSavedConnection: boolean;
+  connectionRef: string;
 };
+
+// ── Saved Connections ─────────────────────────────────────────────────────────
+
+export interface SavedConnectionRequest {
+  name: string;
+  kind: string;
+  host: string;
+  port: number;
+  database: string;
+  username: string;
+  secret_ref?: string;
+}
+
+export interface SavedConnectionResponse {
+  id: string;
+  name: string;
+  kind: string;
+  host: string;
+  port: number;
+  database: string;
+  username: string;
+  secret_ref: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SavedConnectionsResponse {
+  connections: SavedConnectionResponse[];
+}
 
 export type WizardState = {
   step: WizardStep;
