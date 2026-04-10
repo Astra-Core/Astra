@@ -32,6 +32,18 @@ const config = {
         docs: {
           sidebarPath: './sidebars.js',
           editUrl: 'https://github.com/astra-core/astra-core.github.io/edit/main/website/',
+          lastVersion: '0.1.1',
+          versions: {
+            current: {
+              label: 'Next',
+              badge: true,
+            },
+            '0.1.1': {
+              label: '0.1.1',
+              badge: true,
+              banner: 'none',
+            },
+          },
         },
         blog: false,
         theme: {
@@ -61,6 +73,10 @@ const config = {
             sidebarId: 'docsSidebar',
             position: 'left',
             label: 'Docs',
+          },
+          {
+            type: 'docsVersionDropdown',
+            position: 'right',
           },
           {
             href: 'https://github.com/astra-core/astra-core.github.io',
