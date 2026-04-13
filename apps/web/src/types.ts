@@ -6,6 +6,12 @@ export interface MeResponse {
   auth_source: 'local' | 'ldap';
 }
 
+export interface LoginResponse {
+  access_token: string;
+  token_type: 'Bearer';
+  expires_in: number;
+}
+
 export type Pipeline = {
   name: string;
   source_kind: string;
