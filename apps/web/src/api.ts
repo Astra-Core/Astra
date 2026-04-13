@@ -1,5 +1,6 @@
 import type {
   ApplySpecResponse,
+  LoginResponse,
   MeResponse,
   PipelineRunsResponse,
   PipelinesResponse,
@@ -21,6 +22,28 @@ export function registerUnauthorizedHandler(fn: () => void) {
   _onUnauthorized = fn;
 }
 
+const ACCESS_TOKEN_KEY = 'astra.access_token';
+
+function getStoredAccessToken(): string | null {
+  return window.localStorage.getItem(ACCESS_TOKEN_KEY);
+}
+
+function setStoredAccessToken(token: string): void {
+  window.localStorage.setItem(ACCESS_TOKEN_KEY, token);
+}
+
+export function clearStoredAccessToken(): void {
+  window.localStorage.removeItem(ACCESS_TOKEN_KEY);
+}
+
+function withAuthHeader(init?: RequestInit, token?: string | null): RequestInit | undefined {
+  if (!token) return init;
+
+  const headers = new Headers(init?.headers);
+  headers.set('Authorization', `Bearer ${token}`);
+  return { ...init, headers };
+}
+
 /**
  * Wraps `fetch` with automatic token refresh on 401.
  * Cookies are sent automatically (same-origin); no extra headers needed.
@@ -28,19 +51,27 @@ export function registerUnauthorizedHandler(fn: () => void) {
  * the unauthorized handler is invoked to clear auth state.
  */
 export async function fetchWithAuth(input: string, init?: RequestInit): Promise<Response> {
-  const res = await fetch(input, init);
+  const token = getStoredAccessToken();
+  const res = await fetch(input, withAuthHeader(init, token));
   if (res.status !== 401) return res;
 
   // Attempt refresh.
   const refreshRes = await fetch('/api/v1/auth/refresh', { method: 'POST' });
   if (!refreshRes.ok) {
+    clearStoredAccessToken();
     _onUnauthorized?.();
     return res;
   }
 
+  const refreshBody = (await refreshRes.json()) as LoginResponse;
+  setStoredAccessToken(refreshBody.access_token);
+
   // Retry original request once.
-  const retried = await fetch(input, init);
-  if (retried.status === 401) _onUnauthorized?.();
+  const retried = await fetch(input, withAuthHeader(init, refreshBody.access_token));
+  if (retried.status === 401) {
+    clearStoredAccessToken();
+    _onUnauthorized?.();
+  }
   return retried;
 }
 
@@ -56,10 +87,14 @@ export async function loginUser(email: string, password: string): Promise<void> 
     const text = await res.text();
     throw new Error(text || `Login failed: ${res.status}`);
   }
+
+  const body = (await res.json()) as LoginResponse;
+  setStoredAccessToken(body.access_token);
 }
 
 export async function logoutUser(): Promise<void> {
   await fetch('/api/v1/auth/logout', { method: 'POST' });
+  clearStoredAccessToken();
 }
 
 export async function fetchMe(): Promise<MeResponse> {

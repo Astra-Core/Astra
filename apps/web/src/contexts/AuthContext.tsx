@@ -7,7 +7,13 @@ import {
   type ReactNode,
 } from 'react';
 import type { MeResponse } from '@/types';
-import { fetchMe, loginUser, logoutUser, registerUnauthorizedHandler } from '@/api';
+import {
+  clearStoredAccessToken,
+  fetchMe,
+  loginUser,
+  logoutUser,
+  registerUnauthorizedHandler,
+} from '@/api';
 
 interface AuthContextValue {
   user: MeResponse | null;
@@ -23,6 +29,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
 
   const clearAuth = useCallback(() => {
+    clearStoredAccessToken();
     setUser(null);
   }, []);
 
